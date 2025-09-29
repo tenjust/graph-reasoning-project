@@ -12,7 +12,7 @@ It includes:
 ## Folder Structure
 
 ```
-graph_reasoning_project/
+graph-reasoning-project/
 ├── baselines/            # Reference to original paper code and results
 ├── configs/              # YAML configuration files for experiments
 ├── data/                 # Raw and processed datasets
