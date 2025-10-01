@@ -33,7 +33,8 @@ graph_reasoning_project/
 * **baselines/**
 
   * `original_README.md` — notes on paper repo commit, commands, and results
-  * `run_original.sh` — wrapper to run the paper’s baseline code
+  * `run_original_graph_only.sh` — Script to run the paper’s graph-only baseline
+  * * `run_original_text_guided.sh` — Script to run the paper’s text+graph baseline
   * `results/` — stores logs and checkpoints from the paper repo
 
 * **configs/**
@@ -76,18 +77,26 @@ graph_reasoning_project/
 
 ---
 
-## Getting Started
+## Setup Instructions
 
-1. **Clone this repo**
-
+### 1. Clone repositories side by side
 ```bash
-git clone <your-repo-url>
-cd graph-reasoning-project
-```
+# Our team repo
+git clone https://github.com/tenjust/graph-reasoning-project.git graph-reasoning-project
+
+# Paper’s official GLM repo
+git clone https://github.com/Heidelberg-NLP/GraphLanguageModels.git
+
+After cloning, your folder structure should look like:
+
+project_root/
+├── graph-reasoning-project/
+└── GraphLanguageModels/
 
 2. **Install dependencies**
 
 ```bash
+cd graph-reasoning-project
 pip install -r requirements.txt
 # OR if using conda
 conda env create -f environment.yml
@@ -100,6 +109,11 @@ conda activate graph-reasoning-project
 
 4. **Run Baseline A (paper reference)**
 
+-  Graph-only (paper’s baseline, T5-small for testing):
+```bash
+bash baselines/run_original.sh
+```
+- Text + Graph baseline:
 ```bash
 bash baselines/run_original.sh
 ```
