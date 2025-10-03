@@ -1,0 +1,3 @@
+[submodule "baselines/GraphLanguageModels"]
+	path = baselines/GraphLanguageModels
+	url = https://github.com/Heidelberg-NLP/GraphLanguageModels.git
