@@ -271,7 +271,7 @@ class AMRGraph:
         if self.verbose:
             self._print(self.triples, f"Triples ({len(self.triples)})", before_after=True)
 
-        self.graph = self.create_graph()
+        self.graph: Graph = self.create_graph()
         if self.verbose:
             print("Graph summary:")
             print(" ", self.graph.summary(1))
@@ -373,8 +373,8 @@ class AMRGraph:
         for head, rel, tail in self.amr_triples:
             if rel == ":instance":
                 continue
-            rel = Relation(rel)
             head = var_to_entity[head]
+            rel = Relation(rel)
             if head.prefix == "pb":
                 rel.prefix = "pb"
                 # some relations might stay as ARGn even if the concept was retrieved from PropBank,

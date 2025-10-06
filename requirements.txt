@@ -5,3 +5,4 @@ amrlib
 igraph
 penman
 nltk
+unidecode
