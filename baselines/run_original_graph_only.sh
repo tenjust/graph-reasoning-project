@@ -1,11 +1,16 @@
 #!/bin/bash
 # Run GLM with graph-only input (testing setup with T5-small)
 
-cd ../GraphLanguageModels
+cd ../GraphLanguageModels || {
+    echo "Error: GraphLanguageModels repo not found. Please clone it next to this repo."
+    exit 1
+}
 
 modelsize=t5-small # t5-small t5-base t5-large
 
-python experiments/encoder/text_guided_relation_prediction/evaluate_LM.py \
+echo "Running graph-only baseline (T5-small, gGLM)..."
+
+python -m experiments.encoder.relation_prediction.evaluate_LM \
     --seed 0 \
     --params_to_train all \
     --graph_representation gGLM \
@@ -23,4 +28,5 @@ python experiments/encoder/text_guided_relation_prediction/evaluate_LM.py \
     --predict_source False \
     --eval_by_num_seen_instances True \
     --entailed_triplets_only False \
-    --save_preds True
+
+echo "Done."
