@@ -119,10 +119,13 @@ echo "✅ Model installed at $MODEL_DIR"
 echo "==>Cloning GraphLanguageModels into baselines/ ..."
 cd baselines
 git clone https://github.com/Heidelberg-NLP/GraphLanguageModels.git
-cd ..
-git add submodule baselines/GraphLanguageModels
-cd baselines/GraphLanguageModels
-git remote set-url origin https://github.com/tenjust/graph-reasoning-project.git
+rm -rf GraphLanguageModels/.git
+git add GraphLanguageModels
+git commit -m "Remove git history from GraphLanguageModels and add as a regular directory"
 
 #echo "Installing additional dependencies for GraphLanguageModel..."
 # pip3 install -r requirements.txt
+
+cd ..
+
+echo "Setup completed successfully!"
