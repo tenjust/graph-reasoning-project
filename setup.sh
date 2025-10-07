@@ -118,3 +118,10 @@ echo "✅ Model installed at $MODEL_DIR"
 
 #echo "Installing additional dependencies for GraphLanguageModel..."
 # pip3 install -r baselines/GraphLanguageModels/requirements.txt
+
+cd baselines
+git clone https://github.com/Heidelberg-NLP/GraphLanguageModels.git
+cd ..
+git add submodule baselines/GraphLanguageModels
+cd baselines/GraphLanguageModels
+git remote set-url origin https://github.com/tenjust/graph-reasoning-project.git
