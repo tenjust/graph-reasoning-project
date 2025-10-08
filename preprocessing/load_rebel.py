@@ -54,6 +54,18 @@ def load_rebel_hdf5(path):
 
     return DatasetDict(datasets)
 
+def iterate_rebel_hdf5_split(path, split, batch_size=1000):
+    with h5py.File(Path(path), "r") as f:
+        dset = f[split]
+        total = dset.shape[0]
+        for start in range(0, total, batch_size):
+            end = min(start + batch_size, total)
+            batch = dset[start:end]
+            for x in batch:
+                yield json.loads(x.decode("utf-8", "ignore"))
+            break
+
+
 # Build (source, target) for seq2seq
 def build_io(example):
     return {"source": example["context"], "target": linearize_triplets(example.get("triplets", []))}
