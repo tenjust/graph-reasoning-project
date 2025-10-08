@@ -57,4 +57,6 @@ ds = load_rebel_hdf5(path)
 
 print("Splits found:", list(ds.keys()))
 some_split = list(ds.keys())[0]
-print(ds[some_split][0])
+
+for instance in ds[some_split][:5]:
+    print(json.dumps(instance, indent=4))
