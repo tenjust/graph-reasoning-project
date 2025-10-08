@@ -487,19 +487,29 @@ class AMRGraph:
 
 
 if __name__ == "__main__":
-    from amr_examples import AMR_EXAMPLES
+    # from amr_examples import AMR_EXAMPLES
+    #
+    # # TODO: change index to test different examples
+    # i = 0
+    # if i >= len(AMR_EXAMPLES):
+    #     raise ValueError(f"Index {i} out of range for AMR_EXAMPLES with length {len(AMR_EXAMPLES)}")
+    # for j in range(i, len(AMR_EXAMPLES)):
+    #     print(f"\nExample {j+1}:")
+    #     sentence = AMR_EXAMPLES[j]
+    #     print(sentence, "-"*30, sep="\n")
+    #     graph = AMRGraph(sentence, verbose=True)
+    # AMRGraph.print_ave_time() # for test sentences: 6.52 seconds
+    # # The number of unresolved PropBank ARGs is a bit higher than the lookup error count,
+    # # as some retrieved concepts do not have ARGs produced by the model (probably due to nltk being outdated)
+    # print(f"PropBank lookup errors: "
+    #       f"{Entity.LOOKUP_ERROR_COUNTER} out of {Entity.SUCCESSFUL_LOOKUPS_COUNTER} concepts")
 
-    # TODO: change index to test different examples
-    i = 0
-    if i >= len(AMR_EXAMPLES):
-        raise ValueError(f"Index {i} out of range for AMR_EXAMPLES with length {len(AMR_EXAMPLES)}")
-    for j in range(i, len(AMR_EXAMPLES)):
-        print(f"\nExample {j+1}:")
-        sentence = AMR_EXAMPLES[j]
-        print(sentence, "-"*30, sep="\n")
-        graph = AMRGraph(sentence, verbose=True)
-    AMRGraph.print_ave_time() # for test sentences: 6.52 seconds
-    # The number of unresolved PropBank ARGs is a bit higher than the lookup error count,
-    # as some retrieved concepts do not have ARGs produced by the model (probably due to nltk being outdated)
-    print(f"PropBank lookup errors: "
-          f"{Entity.LOOKUP_ERROR_COUNTER} out of {Entity.SUCCESSFUL_LOOKUPS_COUNTER} concepts")
+    sentences = [
+        "Coburg Peak is the rocky peak rising to 783 m in Erul Heights on Trinity Peninsula in Graham Land, Antarctica.",
+        "It is surmounting Cugnot Ice Piedmont to the northeast.",
+        "The peak is named after the Bulgarian royal house of Coburg (Saxe-Coburg-Gotha), 1887–1946."
+    ]
+    graph = AMRGraph(" ".join(sentences), verbose=True)
+
+
+

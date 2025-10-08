@@ -56,7 +56,8 @@ path = root_path / "graph-reasoning-project" / "baselines" / "GraphLanguageModel
 ds = load_rebel_hdf5(path)
 
 print("Splits found:", list(ds.keys()))
-some_split = list(ds.keys())[0]
+some_split = list(ds.keys())[0]  # Splits found: ['test', 'train', 'validation']
 
+# {'context': 'Coburg Peak (, ) is the rocky peak rising to 783 m in Erul Heights on Trinity Peninsula in Graham Land, Antarctica. It is surmounting Cugnot Ice Piedmont to the northeast.\n\nThe peak is named after the Bulgarian royal house of Coburg (Saxe-Coburg-Gotha), 1887–1946.', 'triplets': [['Graham Land', 'continent', 'Antarctica'], ['Trinity Peninsula', 'continent', 'Antarctica'], ['Coburg Peak', 'continent', 'Antarctica'], ['Cugnot Ice Piedmont', 'continent', 'Antarctica'], ['Erul Heights', 'continent', 'Antarctica'], ['Trinity Peninsula', '<mask>', 'Graham Land']]}
 for instance in ds[some_split][:5]:
     print(json.dumps(instance, indent=4))
