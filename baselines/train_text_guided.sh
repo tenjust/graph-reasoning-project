@@ -38,4 +38,6 @@ python3 -m experiments.encoder.text_guided_relation_prediction.train_LM \
     --train_batch_size 16 \
     --eval_batch_size 128 \
     --num_epochs 1 \
+    --run_eval \
+    --max_seq_len 596 \
     --save_model_dir baselines/model_0
