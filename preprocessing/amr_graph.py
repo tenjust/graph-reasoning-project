@@ -488,7 +488,7 @@ class AMRGraph:
 
 if __name__ == "__main__":
     from amr_examples import AMR_EXAMPLES
-
+    
     # TODO: change index to test different examples
     i = 0
     if i >= len(AMR_EXAMPLES):
@@ -503,3 +503,5 @@ if __name__ == "__main__":
     # as some retrieved concepts do not have ARGs produced by the model (probably due to nltk being outdated)
     print(f"PropBank lookup errors: "
           f"{Entity.LOOKUP_ERROR_COUNTER} out of {Entity.SUCCESSFUL_LOOKUPS_COUNTER} concepts")
+
+
