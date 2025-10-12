@@ -252,7 +252,10 @@ class AMRGraph:
         start_time = time.time()
         self.verbose = verbose
 
-        self.sentence = sentence.strip()
+        self.sentence = sentence.replace("\n", " ").strip()
+        if self.verbose:
+            print("-"*30, "Original sentence:", sep="\n")
+            print(self.sentence)
         _, self.amr_graph = stog.parse_sents([self.sentence])[0].split("\n", 1)
         self.amr_triples = penman.decode(self.amr_graph).triples
 
