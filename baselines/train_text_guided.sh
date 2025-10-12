@@ -1,5 +1,6 @@
 #!/bin/bash
 # Train a text-guided Graph Language Model (REBEL dataset)
+# NB: Doesn't work hand-run within an salloc job, only via sbatch
 
 # Job name
 #SBATCH --job-name=graph
@@ -20,6 +21,8 @@
 
 source ~/.bashrc 2>/dev/null
 
+pyenv activate .venv || { echo "Error: Could not activate the .venv pyenv environment."; exit 1; }
+
 cd baselines/GraphLanguageModels || { echo "Error: Could not change to GraphLanguageModels directory."; exit 1; }
 
 MODELSIZE=t5-small  # options: t5-small, t5-base, t5-large
@@ -38,6 +41,6 @@ python3 -m experiments.encoder.text_guided_relation_prediction.train_LM \
     --train_batch_size 16 \
     --eval_batch_size 128 \
     --num_epochs 1 \
-    --run_eval \
+    --run_eval True \
     --max_seq_len 596 \
-    --save_model_dir baselines/model_0
+    --save_model_dir baselines/model_4
