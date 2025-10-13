@@ -59,7 +59,11 @@ def query_conceptnet(word: str, lang="en") -> dict:
     """
     word = word.replace(' ', '_').lower()
     url = f"https://api.conceptnet.io/c/{lang}/{word}"
-    response = requests.get(url).json()
+    try:
+        response = requests.get(url).json()
+    except requests.exceptions.JSONDecodeError:
+        response = {}
+        logging.error(f"Failed to decode JSON response from ConceptNet for word: {word}")
     return response
 
 
