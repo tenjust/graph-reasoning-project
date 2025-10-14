@@ -42,7 +42,7 @@ def _ensure_split_dataset(h5f: h5py.File, split: str) -> h5py.Dataset:
     Each element is a JSON row (UTF-8). This matches the other reader.
     """
     node = h5f.get(split)
-    if node is not None:
+    if node:
         if isinstance(node, h5py.Dataset):
             return node
         else:
@@ -50,12 +50,12 @@ def _ensure_split_dataset(h5f: h5py.File, split: str) -> h5py.Dataset:
                 f"Expected '/{split}' to be a dataset, found {type(node)}. "
                 f"Delete or rename this group (it probably contains 'data')."
             )
-    str_dt = h5py.string_dtype()
+    # if not found, create it
     dset = h5f.create_dataset(
         split,
         shape=(0,),
         maxshape=(None,),
-        dtype=str_dt,
+        dtype=h5py.string_dtype('utf-8'),
         chunks=True
     )
     dset.attrs["written"] = 0
@@ -63,16 +63,18 @@ def _ensure_split_dataset(h5f: h5py.File, split: str) -> h5py.Dataset:
 
 
 def _written_count(h5f: h5py.File, split: str) -> int:
+    """Return how many records have been written to the given split dataset."""
     if split in h5f and isinstance(h5f[split], h5py.Dataset):
         return int(h5f[split].attrs.get("written", 0))
     return 0
 
 
 def _append_record(h5f: h5py.File, split: str, obj: dict):
+    """Append a single JSON-serializable object to the given split dataset."""
     dset = _ensure_split_dataset(h5f, split)
     n = dset.shape[0]
     dset.resize((n + 1,))
-    dset[n] = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    dset[n] = json.dumps(obj, ensure_ascii=False)  # for proper printing: dset[n].decode("utf-8")
     dset.attrs["written"] = int(dset.attrs.get("written", 0)) + 1
 
 
@@ -108,10 +110,19 @@ def parse_args():
 # ------------------------ Processing ------------------------ #
 
 def process_split(src: Path, out: Path, split: str, n: int, use_amr: bool,
-                  resume: bool, flush_every: int, skip_errors: bool):
+                  resume: bool, flush_every: int, skip_errors: bool) -> None:
     """
     Load up to n examples from `split`, process incrementally, append to `out` HDF5.
     If `resume` is True, skip records already present in `out` for that split.
+    :param src: Source HDF5 file
+    :param out: Output HDF5 file (created if missing)
+    :param split: One of "train", "val", "test"
+    :param n: Number of records to process (max)
+    :param use_amr: If True, augment each record with AMR-based triples
+    :param resume: If True, skip records already present in `out`
+    :param flush_every: Flush to disk every K records
+    :param skip_errors: If True, log and skip records that raise exceptions
+    :return: None
     """
     print(f"\n[Split: {split}] Loading up to {n} examples from: {src}")
     records = load_original_split(src, split, n=n)
@@ -127,7 +138,7 @@ def process_split(src: Path, out: Path, split: str, n: int, use_amr: bool,
 
         # Iterate and append
         since_last_flush = 0
-        for i in tqdm(range(start_idx, total), desc="Processing sentence.."):
+        for i in tqdm(range(start_idx, total), desc="Processing data instances.."):
             rec = records[i]
 
             if use_amr:
@@ -151,6 +162,8 @@ def process_split(src: Path, out: Path, split: str, n: int, use_amr: bool,
 
             # Periodic flush
             if since_last_flush >= flush_every:
+                if flush_every > 1:
+                    print(f"[Split: {split}] [{start_idx + i + 1}/{total}] Saving {since_last_flush} last instances..")
                 h5f.flush()
                 since_last_flush = 0
 
@@ -191,15 +204,15 @@ if __name__ == "__main__":
 # Example usage:
 # Process each split separately (safe for parallel execution):
 #
-# python augment_rebel.py --split train --amr --flush-every 25 --skip-errors --resume
-# python augment_rebel.py --split val   --amr --flush-every 25 --skip-errors --resume
-# python augment_rebel.py --split test  --amr --flush-every 25 --skip-errors --resume
+# python3 augment_rebel.py --split train --amr --flush-every 25 --skip-errors --resume
+# python3 augment_rebel.py --split val   --amr --flush-every 25 --skip-errors --resume
+# python3 augment_rebel.py --split test  --amr --flush-every 25 --skip-errors --resume
 #
 # You can run them in parallel, e.g.:
 #   parallel -j3 --lb \
 #     "python augment_rebel.py --split {} --amr --flush-every 25 --skip-errors --resume" ::: train val test
 #
 # After all runs complete, merge outputs using merge_hdf5_splits.py (if desired):
-#   python merge_hdf5_splits.py REBEL_AMR_TRIPLES.all.hdf5 \
+#   python3 merge_hdf5_splits.py REBEL_AMR_TRIPLES.all.hdf5 \
 #     REBEL_AMR_TRIPLES.train.hdf5 REBEL_AMR_TRIPLES.val.hdf5 REBEL_AMR_TRIPLES.test.hdf5
 # ---------------------------------------------------------------------------

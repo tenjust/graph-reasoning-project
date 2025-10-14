@@ -62,7 +62,7 @@ def iterate_rebel_hdf5_split(path, split, batch_size=1000):
             end = min(start + batch_size, total)
             batch = dset[start:end]
             for x in batch:
-                yield json.loads(x.decode("utf-8", "ignore"))
+                yield json.loads(x.decode("utf-8"))
             break
 
 
@@ -82,4 +82,4 @@ if __name__ == "__main__":
     # 'triplets': [['Graham Land', 'continent', 'Antarctica'], ['Trinity Peninsula', 'continent', 'Antarctica'], ['Coburg Peak', 'continent', 'Antarctica'],
     # ['Cugnot Ice Piedmont', 'continent', 'Antarctica'], ['Erul Heights', 'continent', 'Antarctica'], ['Trinity Peninsula', '<mask>', 'Graham Land']]}
     for instance in split_data:
-        print(json.dumps(instance, indent=4))
+        print(json.dumps(instance, indent=4, ensure_ascii=False))

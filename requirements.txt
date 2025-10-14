@@ -7,3 +7,4 @@ penman
 nltk
 unidecode
 h5py
+datasets
