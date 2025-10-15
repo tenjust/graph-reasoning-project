@@ -105,12 +105,21 @@ if __name__ == "__main__":
 
     split_data = iterate_rebel_hdf5_split(path, split)
     cases_with_errors = 0
+    error_examples = {}
+    example_processed = None
     ids_processed = []
     for i, instance in enumerate(split_data):
-        if "AMR_based_triples" not in instance:
+        if not instance["AMR_based_triplets"]:
+            if instance["_amr_error"] not in error_examples:
+                error_examples[instance["_amr_error"]] = instance
             cases_with_errors += 1
             continue
         ids_processed.append(i)
-        # print(json.dumps(instance, indent=4, ensure_ascii=False))
+        if not example_processed:
+            example_processed = instance
+
     print(f"Processed {len(ids_processed)} examples, {cases_with_errors} had errors.")
+    print(f"Examples of errors encountered ({len(error_examples)}):")
+    print(json.dumps(error_examples, indent=4, ensure_ascii=False))
     print("IDs processed:", ids_processed)
+    print("Example instance:", json.dumps(example_processed, indent=4, ensure_ascii=False), sep="\n")

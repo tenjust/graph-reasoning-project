@@ -1,3 +1,9 @@
+# Description: Incrementally process REBEL dataset to add AMR-based triples, with error handling and resumability.
+#              Each split can be processed separately, allowing parallel execution.
+#              Outputs are stored in HDF5 format, compatible with existing REBEL loaders.
+#              Example usage at the end of the file.
+# ---------------------------------------------------------------------------
+
 from __future__ import annotations
 from pathlib import Path
 import argparse
@@ -30,9 +36,15 @@ def get_amr_triples(text: str) -> list[list[str]]:
 def add_amr_to_record(record: dict) -> dict:
     """Add 'AMR_based_triples' field to a single record (in-place)."""
     text = record.get("text", "")
-    record["AMR_based_triples"] = get_amr_triples(text) if text else []
+    record["AMR_based_triplets"] = get_amr_triples(text) if text else []
+    record["_amr_error"] = ""
     return record
 
+def add_empty_record(record: dict, error: Exception) -> dict:
+    """Add an empty AMR result to a single record in case of errors (in-place)."""
+    record.setdefault("AMR_based_triplets", [])
+    record["_amr_error"] = str(error).strip()
+    return record
 
 # ------------------------ Incremental HDF5 helpers ------------------------ #
 
@@ -94,8 +106,6 @@ def parse_args():
                    help="Number of test examples to process")
     p.add_argument("--inspect", action="store_true",
                    help="Inspect the source HDF5 file and exit")
-    p.add_argument("--amr", action="store_true",
-                   help="Augment records with AMR-based triples")
     p.add_argument("--resume", action="store_true",
                    help="Resume from where the output file last left off (per split).")
     p.add_argument("--flush-every", type=int, default=50,
@@ -109,7 +119,7 @@ def parse_args():
 
 # ------------------------ Processing ------------------------ #
 
-def process_split(src: Path, out: Path, split: str, n: int, use_amr: bool,
+def process_split(src: Path, out: Path, split: str, n: int,
                   resume: bool, flush_every: int, skip_errors: bool) -> None:
     """
     Load up to n examples from `split`, process incrementally, append to `out` HDF5.
@@ -118,7 +128,6 @@ def process_split(src: Path, out: Path, split: str, n: int, use_amr: bool,
     :param out: Output HDF5 file (created if missing)
     :param split: One of "train", "val", "test"
     :param n: Number of records to process (max)
-    :param use_amr: If True, augment each record with AMR-based triples
     :param resume: If True, skip records already present in `out`
     :param flush_every: Flush to disk every K records
     :param skip_errors: If True, log and skip records that raise exceptions
@@ -141,21 +150,18 @@ def process_split(src: Path, out: Path, split: str, n: int, use_amr: bool,
         for i in tqdm(range(start_idx, total), desc="Processing data instances.."):
             rec = records[i]
 
-            if use_amr:
-                try:
-                    add_amr_to_record(rec)
-                    rec["triplets"] = rec.get("AMR_based_triples", [])
-                except Exception as e:
-                    if skip_errors:
-                        print(f"[Split: {split}] [idx {i}] AMR error: {e}")
-                        traceback.print_exc(limit=1)
-                        rec["_amr_error"] = str(e)
-                        rec["_amr_failed"] = True
-                        rec.setdefault("triplets", [])
-                    else:
-                        raise
-            else:
-                rec.setdefault("triplets", [])
+            try:
+                add_amr_to_record(rec)
+            except Exception as e:
+                if skip_errors:
+                    print(
+                        f"[Split: {split}] [idx {i}] "
+                        f"Skipping error occurred when creating AMR data: {e}"
+                    )
+                    traceback.print_exc(limit=1)
+                    add_empty_record(rec, e)
+                else:
+                    raise e
 
             _append_record(h5f, split, rec)
             since_last_flush += 1
@@ -193,7 +199,7 @@ def main() -> None:
     # Process only the requested split (safe for parallel runs)
     n_map = {"train": args.n_train, "val": args.n_val, "test": args.n_test}
     n = n_map[args.split]
-    process_split(src, out, args.split, n, args.amr, args.resume, args.flush_every, args.skip_errors)
+    process_split(src, out, args.split, n, args.resume, args.flush_every, args.skip_errors)
 
     print(f"\nDone. Split {args.split} written to {out}. Re-run with --resume to continue if interrupted.")
 
@@ -204,13 +210,13 @@ if __name__ == "__main__":
 # Example usage:
 # Process each split separately (safe for parallel execution):
 #
-# python3 augment_rebel.py --split train --amr --flush-every 25 --skip-errors --resume
-# python3 augment_rebel.py --split val   --amr --flush-every 25 --skip-errors --resume
-# python3 augment_rebel.py --split test  --amr --flush-every 25 --skip-errors --resume
+# python3 augment_rebel.py --split train --flush-every 25 --skip-errors --resume
+# python3 augment_rebel.py --split val   --flush-every 25 --skip-errors --resume
+# python3 augment_rebel.py --split test  --flush-every 25 --skip-errors --resume
 #
 # You can run them in parallel, e.g.:
 #   parallel -j3 --lb \
-#     "python augment_rebel.py --split {} --amr --flush-every 25 --skip-errors --resume" ::: train val test
+#     "python augment_rebel.py --split {} --flush-every 25 --skip-errors --resume" ::: train val test
 #
 # After all runs complete, merge outputs using merge_hdf5_splits.py (if desired):
 #   python3 merge_hdf5_splits.py REBEL_AMR_TRIPLES.all.hdf5 \
