@@ -3,7 +3,7 @@
 echo "Starting setup script..."
 set -e  # Exit on any error
 
-PY_VERSION="3.13"
+PY_VERSION="3.13" # 3.9.16
 VENV_NAME=".venv"
 
 # Ensure pyenv is available and initialize it for this shell

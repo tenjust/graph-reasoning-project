@@ -16,7 +16,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttenti
 
 
 def clamp_inf_values(states: Tensor) -> Tensor:
-    """ Clamp inf values to enable fp16 training - fully from oridinal T5 implementation """
+    """ Clamp inf values to enable fp16 training - fully from original T5 implementation """
     if states.dtype == torch.float16 and torch.isinf(states).any():
         clamp_value = torch.finfo(states.dtype).max - 1000
         return torch.clamp(states, min=-clamp_value, max=clamp_value)
@@ -86,21 +86,21 @@ class GraphAttention(T5Attention):
             parent_bias = parent_model.encoder.block[0].layer[0].SelfAttention.relative_attention_bias.weight
         # parent_bias share: (num_buckets, num_heads) # TODO: double check if these are the dimensions
         # TODO: remove if the same model will be used
-        num_buckets, num_heads = parent_bias.shape
+        parent_num_buckets, parent_num_heads = parent_bias.shape
         rel_attn_buckets_num, rel_attn_heads_num = self.relative_attention_bias.weight.shape
-        assert num_heads == rel_attn_heads_num, f"{num_heads} should be {rel_attn_heads_num}"
-        assert num_buckets <= rel_attn_buckets_num, f"{num_buckets} should be <= {rel_attn_buckets_num}"
+        assert parent_num_buckets == rel_attn_heads_num, f"{parent_num_buckets} should be {rel_attn_heads_num}"
+        assert parent_num_heads <= rel_attn_buckets_num, f"{parent_num_heads} should be <= {rel_attn_buckets_num}"
 
         logging.debug('init normal buckets')
         # TODO: if the same model, it can be removed
         with torch.no_grad():
-            self.relative_attention_bias.weight[:num_buckets, :] = parent_bias
+            self.relative_attention_bias.weight[:parent_num_heads, :] = parent_bias
 
         logging.debug('get parent buckets for additional buckets')
         if not init_additional_buckets_from:
             return
         # num_additional_buckets = 0, if the same model is used
-        num_additional_buckets = rel_attn_buckets_num - num_buckets
+        num_additional_buckets = rel_attn_buckets_num - parent_num_heads
         if not num_additional_buckets:
             return
         raise NotImplementedError("num_additional_buckets > 0, so additional buckets need to be initialized!")
@@ -324,9 +324,11 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         # TODO: add a toggle for Self-Attention
         #  if it's the first layer, run init_relative_position_bias in init
         self.t5.encoder.forward = self.stack_forward.__get__(self.t5.encoder)
+        # self_attn, feed_forward are added to the T5Block outside the ModuleList (the ones in the list are not changed)
         for layer, block in enumerate(self.t5.encoder.block):
             assert type(block) == T5Block, "Expected T5Block, got {}".format(type(block))
             block.forward = self.block_forward.__get__(block)
+            block.layer = None
             # create a new self-attention layer
             first_layer = True if layer == 0 else False
             block.self_attn = T5LayerSelfAttention(
