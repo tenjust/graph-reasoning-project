@@ -1,12 +1,17 @@
 import json
 from pathlib import Path
+from typing import Iterable
+
 import h5py
 from datasets import Dataset, DatasetDict
 
 root_path = Path.cwd().parent
 
-# def _decode(b):
-#     return b.decode("utf-8", "ignore") if isinstance(b, (bytes, bytearray)) else b
+
+# Build (source, target) for seq2seq
+def build_io(example):
+    return {"source": example["context"], "target": linearize_triplets(example.get("triplets", []))}
+
 
 def linearize_triplets(triplets):
     """Convert triplets to linearized string format with special tokens."""
@@ -54,8 +59,35 @@ def load_rebel_hdf5(path):
 
     return DatasetDict(datasets)
 
-def iterate_rebel_hdf5_split(path, split, batch_size=1000):
-    with h5py.File(Path(path), "r") as f:
+
+def number_of_instances_hdf5(path: Path, split: str) -> int:
+    """
+    Get the number of instances in a given split of the REBEL dataset stored in HDF5.
+    :param path: Path to HDF5 file.
+    :param split: Split name ('train', 'validation', 'test').
+    :return: Number of instances in the specified split.
+    """
+    if split not in ('train', 'validation', 'test'):
+        raise ValueError(f"Invalid split name: {split}. Must be 'train', 'validation', or 'test'.")
+    with h5py.File(path, "r") as f:
+        if split not in f:
+            raise KeyError(f"Split '{split}' not found in {path}. Available splits: {list(f.keys())}")
+        dset = f[split]
+        return dset.shape[0]
+
+
+def iterate_rebel_hdf5_split(path: Path, split: str, batch_size: int = 1000) -> Iterable[dict]:
+    """
+    Load REBEL dataset from HDF5 file in batches, yielding one example at a time.
+    Each element is a JSON string decoded into a Python dict.
+    :param path: Path to HDF5 file.
+    :param split: Split name ('train', 'validation', 'test').
+    :param batch_size: Number of examples to read in each batch.
+    :return: Iterator of dicts each representing one data instance.
+    """
+    if split not in ('train', 'validation', 'test'):
+        raise ValueError(f"Invalid split name: {split}. Must be 'train', 'validation', or 'test'.")
+    with h5py.File(path, "r") as f:
         dset = f[split]
         total = dset.shape[0]
         for start in range(0, total, batch_size):
@@ -63,23 +95,22 @@ def iterate_rebel_hdf5_split(path, split, batch_size=1000):
             batch = dset[start:end]
             for x in batch:
                 yield json.loads(x.decode("utf-8"))
-            break
 
-
-# Build (source, target) for seq2seq
-def build_io(example):
-    return {"source": example["context"], "target": linearize_triplets(example.get("triplets", []))}
 
 if __name__ == "__main__":
     path = root_path / "baselines" / "GraphLanguageModels" / "data" / "rebel_dataset" / "REBEL_AMR_TRIPLES.train.hdf5"
-    split_data = iterate_rebel_hdf5_split(path, "train")
 
-    # print("Splits found:", list(ds.keys()))
-    # some_split = list(ds.keys())[0] # Splits found: ['test', 'train', 'validation']
+    split = "train"
+    print(f"Total examples in split '{split}': {number_of_instances_hdf5(path, split)}")
 
-    # {'context': 'Coburg Peak (, ) is the rocky peak rising to 783 m in Erul Heights on Trinity Peninsula in Graham Land, Antarctica.
-    # It is surmounting Cugnot Ice Piedmont to the northeast.\n\nThe peak is named after the Bulgarian royal house of Coburg (Saxe-Coburg-Gotha), 1887–1946.',
-    # 'triplets': [['Graham Land', 'continent', 'Antarctica'], ['Trinity Peninsula', 'continent', 'Antarctica'], ['Coburg Peak', 'continent', 'Antarctica'],
-    # ['Cugnot Ice Piedmont', 'continent', 'Antarctica'], ['Erul Heights', 'continent', 'Antarctica'], ['Trinity Peninsula', '<mask>', 'Graham Land']]}
-    for instance in split_data:
-        print(json.dumps(instance, indent=4, ensure_ascii=False))
+    split_data = iterate_rebel_hdf5_split(path, split)
+    cases_with_errors = 0
+    ids_processed = []
+    for i, instance in enumerate(split_data):
+        if "AMR_based_triples" not in instance:
+            cases_with_errors += 1
+            continue
+        ids_processed.append(i)
+        # print(json.dumps(instance, indent=4, ensure_ascii=False))
+    print(f"Processed {len(ids_processed)} examples, {cases_with_errors} had errors.")
+    print("IDs processed:", ids_processed)
