@@ -62,7 +62,7 @@ def iterate_rebel_hdf5_split(path, split, batch_size=1000):
             end = min(start + batch_size, total)
             batch = dset[start:end]
             for x in batch:
-                yield json.loads(x.decode("utf-8", "ignore"))
+                yield json.loads(x.decode("utf-8"))
             break
 
 
@@ -71,15 +71,15 @@ def build_io(example):
     return {"source": example["context"], "target": linearize_triplets(example.get("triplets", []))}
 
 if __name__ == "__main__":
-    path = root_path / "graph-reasoning-project" / "baselines" / "GraphLanguageModels" / "data" / "rebel_dataset" / "rebel.hdf5"
-    ds = load_rebel_hdf5(path)
+    path = root_path / "baselines" / "GraphLanguageModels" / "data" / "rebel_dataset" / "REBEL_AMR_TRIPLES.train.hdf5"
+    split_data = iterate_rebel_hdf5_split(path, "train")
 
-    print("Splits found:", list(ds.keys()))
-    some_split = list(ds.keys())[0] # Splits found: ['test', 'train', 'validation']
+    # print("Splits found:", list(ds.keys()))
+    # some_split = list(ds.keys())[0] # Splits found: ['test', 'train', 'validation']
 
     # {'context': 'Coburg Peak (, ) is the rocky peak rising to 783 m in Erul Heights on Trinity Peninsula in Graham Land, Antarctica.
     # It is surmounting Cugnot Ice Piedmont to the northeast.\n\nThe peak is named after the Bulgarian royal house of Coburg (Saxe-Coburg-Gotha), 1887–1946.',
     # 'triplets': [['Graham Land', 'continent', 'Antarctica'], ['Trinity Peninsula', 'continent', 'Antarctica'], ['Coburg Peak', 'continent', 'Antarctica'],
     # ['Cugnot Ice Piedmont', 'continent', 'Antarctica'], ['Erul Heights', 'continent', 'Antarctica'], ['Trinity Peninsula', '<mask>', 'Graham Land']]}
-    for instance in ds[some_split][:5]:
-        print(json.dumps(instance, indent=4))
+    for instance in split_data:
+        print(json.dumps(instance, indent=4, ensure_ascii=False))
