@@ -156,7 +156,8 @@ def process_split(src: Path, out: Path, split: str, n: int,
                 if skip_errors:
                     print(
                         f"[Split: {split}] [idx {i}] "
-                        f"Skipping error occurred when creating AMR data: {e}"
+                        f"Skipping error occurred when creating AMR data: {e}",
+                        flush=True
                     )
                     traceback.print_exc(limit=1)
                     add_empty_record(rec, e)

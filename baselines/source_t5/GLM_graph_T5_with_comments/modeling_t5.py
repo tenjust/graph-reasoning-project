@@ -720,8 +720,10 @@ class T5Attention(nn.Module):
             self.relative_attention_bias.weight[:parent_bias.shape[0], :] = parent_bias
 
         logging.debug('get parent buckets for additional buckets')
+        # Can we skip the weight init if it's already loaded from the pretrained model anf only extend the weights with buckets???
         if init_additional_buckets_from is None:
             return
+        # When initialised from the same model, num_additional_buckets = 0???
         num_additional_buckets = self.relative_attention_bias.weight.shape[0] - parent_bias.shape[0]
         if num_additional_buckets == 0:
             return
@@ -730,6 +732,7 @@ class T5Attention(nn.Module):
         assert len(
             init_additional_buckets_from) == num_additional_buckets, f"{len(init_additional_buckets_from)} should be {num_additional_buckets}"
 
+        # Why can init_additional_buckets_from have None values???
         skip_bucket = [idx is None for idx in init_additional_buckets_from]
         init_additional_buckets_from = [0 if idx is None else idx for idx in init_additional_buckets_from]
         init_additional_buckets_from = torch.tensor(init_additional_buckets_from, dtype=torch.long)
@@ -737,6 +740,7 @@ class T5Attention(nn.Module):
                                                                       bidirectional=(not is_decoder),
                                                                       num_buckets=self.relative_attention_num_buckets,
                                                                       max_distance=self.relative_attention_max_distance,
+                                                                      # Why not use additional buckets???
                                                                       use_additional_bucket=None)
 
         logging.debug('Initialize relative position bias')
