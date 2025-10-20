@@ -2,12 +2,10 @@ import json
 import h5py
 import torch
 from torch.utils.data import Dataset
-from transformers import (
-    T5Tokenizer,
-    T5ForConditionalGeneration,
-    Trainer,
-    TrainingArguments,
-)
+from transformers import Trainer, TrainingArguments, T5Config
+
+from baselines.AMR_KG_rel_classifier import Graph2GraphRelationClassifier
+
 
 # ==============================
 #  Dataset class
@@ -88,16 +86,20 @@ def main():
     args = parser.parse_args()
 
     # Load tokenizer and model
-    tokenizer = T5Tokenizer.from_pretrained(args.model_name)
-    model = T5ForConditionalGeneration.from_pretrained(args.model_name)
+    # tokenizer = T5Tokenizer.from_pretrained(args.model_name)
+    # model = T5ForConditionalGeneration.from_pretrained(args.model_name)
+    config = T5Config.from_pretrained("t5-small")
+    model = Graph2GraphRelationClassifier(config)
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    model.to(device)
 
     # Load dataset
-    train_ds, val_ds = load_dataset(tokenizer, args.train_data, args.val_data, args.max_length, args.use_amr)
+    train_ds, val_ds = load_dataset(model.tokenizer, args.train_data, args.val_data, args.max_length, args.use_amr)
 
     # Define training arguments
     training_args = TrainingArguments(
         output_dir=args.output_dir,
-        evaluation_strategy="epoch" if val_ds else "no",
+        eval_strategy="epoch" if val_ds else "no",
         learning_rate=args.learning_rate,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -116,7 +118,7 @@ def main():
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=val_ds,
-        tokenizer=tokenizer,
+        tokenizer=model.tokenizer,
     )
 
     # Train
@@ -124,7 +126,7 @@ def main():
 
     # Save model
     trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
+    model.tokenizer.save_pretrained(args.output_dir)
 
     print("Training complete! Model saved to:", args.output_dir)
 

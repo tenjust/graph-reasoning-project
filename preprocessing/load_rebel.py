@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
-from typing import Iterable
 
 import h5py
 from datasets import Dataset, DatasetDict
+
+from data.utils import iterate_rebel_hdf5_split
 
 root_path = Path.cwd().parent
 
@@ -74,27 +75,6 @@ def number_of_instances_hdf5(path: Path, split: str) -> int:
             raise KeyError(f"Split '{split}' not found in {path}. Available splits: {list(f.keys())}")
         dset = f[split]
         return dset.shape[0]
-
-
-def iterate_rebel_hdf5_split(path: Path, split: str, batch_size: int = 1000) -> Iterable[dict]:
-    """
-    Load REBEL dataset from HDF5 file in batches, yielding one example at a time.
-    Each element is a JSON string decoded into a Python dict.
-    :param path: Path to HDF5 file.
-    :param split: Split name ('train', 'validation', 'test').
-    :param batch_size: Number of examples to read in each batch.
-    :return: Iterator of dicts each representing one data instance.
-    """
-    if split not in ('train', 'validation', 'test'):
-        raise ValueError(f"Invalid split name: {split}. Must be 'train', 'validation', or 'test'.")
-    with h5py.File(path, "r") as f:
-        dset = f[split]
-        total = dset.shape[0]
-        for start in range(0, total, batch_size):
-            end = min(start + batch_size, total)
-            batch = dset[start:end]
-            for x in batch:
-                yield json.loads(x.decode("utf-8"))
 
 
 if __name__ == "__main__":

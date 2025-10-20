@@ -8,5 +8,5 @@ nltk
 unidecode
 h5py
 datasets
-optuna
+optuna-integration==3.0.0
 scikit-optimize

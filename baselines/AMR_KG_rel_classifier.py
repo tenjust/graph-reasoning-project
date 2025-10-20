@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from itertools import chain
 
 from torch import nn
 from torch import Tensor
@@ -10,9 +11,14 @@ import logging
 from transformers import T5Config
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.t5.tokenization_t5_fast import T5TokenizerFast
-from transformers.models.t5.modeling_t5 import T5EncoderModel, T5Block, T5LayerFF, T5LayerSelfAttention, T5Stack, \
-    T5Attention
+from transformers.models.t5.modeling_t5 import T5EncoderModel, T5Block, T5LayerFF, \
+    T5LayerSelfAttention, T5Stack, T5Attention
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
+
+from baselines.GraphLanguageModels.experiments.encoder.text_guided_relation_prediction.data_utils import \
+    data_to_dataT5
+from baselines.GraphLanguageModels.models.graph_T5.wrapper_functions import Graph, Data
+from data.utils import load_hdf5_data
 
 
 def clamp_inf_values(states: Tensor) -> Tensor:
@@ -23,14 +29,66 @@ def clamp_inf_values(states: Tensor) -> Tensor:
     return states
 
 
+def init_tensors(batch_dim: int, max_seq_len: int, device=None) -> tuple[Tensor ,...]:
+    """
+    Initialize relative position, sparsity mask, and additional bucket mask tensors.
+    They are the same except for their data types.
+    :param batch_dim: batch size
+    :param max_seq_len: maximum sequence length
+    :param device: device to create the tensors on
+    :return: tuple of initialized tensors
+    """
+    relative_position = torch.zeros(
+        (batch_dim, max_seq_len, max_seq_len), dtype=torch.long, device=device
+    )
+    sparsity_mask = torch.zeros(
+        (batch_dim, max_seq_len, max_seq_len), dtype=torch.bool, device=device
+    )
+    use_additional_bucket = torch.zeros(
+        (batch_dim, max_seq_len, max_seq_len), dtype=torch.bool, device=device
+    )
+    return relative_position, sparsity_mask, use_additional_bucket
+
+
+def preprocess(data_instance: dict, tokenizer: T5TokenizerFast, use_amr: bool) -> Data:
+    """
+    Preprocess a data instance into a Data object suitable for GraphT5 model
+    :param data_instance: input data instance with triplets, text, mask_origin, and label
+    :param tokenizer: tokenizer to use for text processing
+    : use_amr: whether to use AMR-based triplets (not supported yet)
+    """
+    if use_amr and "AMR_based_triplets" in data_instance:
+        raise NotImplementedError("Using AMR_based_triplets is not supported yet, sorry!")
+    elif use_amr and "AMR_based_triplets" not in data_instance:
+        warnings.warn(
+            "use_amr is True, but no AMR_based_triplets found in data_instance! (not supported yet)"
+        )
+    if any(key not in data_instance for key in ["triplets", "text", "mask_origin", "label"]):
+        raise ValueError(
+            "Data instance must contain 'triplets', 'text', 'mask_origin', and 'label' fields."
+        )
+    kg = Graph(data_instance['triplets'])
+    processed_instance = data_to_dataT5(
+        graph=kg,
+        text=data_instance['text'],
+        mask_origin=data_instance['mask_origin'],
+        tokenizer=tokenizer,
+        label=data_instance['label'],
+        graph_representation="gGLM",
+        eos='False',  # following GLM paper, no eos token
+        use_text='FullyConnected',
+    )
+    return processed_instance
+
+
 class Decorators:
+    """ Collection of decorators for GraphT5 model methods """
     @staticmethod
     def check_stack_kwargs(stack_forward):
         """ Wrapper to call the T5Stack forward method with the correct arguments """
         def inner_fn(self, **kwargs):
             # Optional arguments:
             # "head_mask", "attention_mask", "inputs_embeds", "output_attentions", "output_hidden_states", "return_dict"
-            # TODO: rename use_additional_bucket
             obligatory_args = {"input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"}
             key_args = set(kwargs.keys())
             assert obligatory_args.issubset(key_args), \
@@ -55,6 +113,60 @@ class Decorators:
             else:
                 assert obligatory_args == key_args, f"Expected keys: {obligatory_args}, but got {key_args}"
             return block_forward(self, **kwargs)
+        return inner_fn
+
+    @staticmethod
+    def graph_preprocessing(forward_fn):
+        """ Wrapper for preprocessing the graph-related inputs before passing them to the model """
+        def inner_fn(self, data: dict | list[dict], use_amr: bool) -> tuple[Tensor, ...]:
+            """
+            Preprocess the input data (single instance or batch) and prepare tensors for the model.
+            The code of this function is heavily inspired by the GLM processing pipeline
+            (see get_batch function in train_LM.py).
+
+            :param self: model instance
+            :param data: input data instance or batch of instances
+            :return: tensors of preprocessed inputs for the model are passed to forward_fn
+            """
+            if type(data) is list:
+                # batch of data instances
+                data = [preprocess(data_instance, self.tokenizer, use_amr) for data_instance in data]
+
+                batch_max_seq_len = max([d.input_ids.shape[1] for d in data])
+                max_seq_len = min(self.max_seq_len, batch_max_seq_len)
+
+                input_ids = torch.ones(
+                    (len(data), max_seq_len), dtype=torch.long, device=self.device
+                ) * self.tokenizer.pad_token_id
+                # tensors: relative_position, sparsity_mask, use_additional_bucket
+                tensors = init_tensors(len(data), max_seq_len, self.device)
+                for i, d in enumerate(data):
+                    d_tensors = [d.relative_position, d.sparsity_mask, d.use_additional_bucket]
+                    # check that all tensors have the same seq_len
+                    shapes = [d.input_ids.shape[1], *chain.from_iterable(t.shape[1:] for t in d_tensors)]
+                    assert len(set(shapes)) == 1, f"Inconsistent shapes in data instance {i}: {shapes}"
+
+                    # fill in the tensors with data from the instance
+                    instance_len = min(d.input_ids.shape[1], max_seq_len)
+                    input_ids[i, :instance_len] = d.input_ids[:, :instance_len]
+                    for j, d_tensor in enumerate(d_tensors):
+                        tensors[j][i, :instance_len, :instance_len] = \
+                            d_tensor[:, :instance_len, :instance_len]
+                # TODO: redefine or stack?
+                self.labels = torch.tensor([d.label for d in data], device=device)
+                return forward_fn(self, input_ids, *tensors)
+            else:
+                # single data instance
+                warnings.warn(
+                    "Single data instance passed to the model, double-check the shape handling!"
+                )
+                data = preprocess(data, self.tokenizer, use_amr)
+                self.labels = torch.tensor([data], device=device)
+                outputs = (data.input_ids,
+                           data.relative_position,
+                           data.sparsity_mask,
+                           data.use_additional_bucket)
+                return forward_fn(self, *outputs)
         return inner_fn
 
 
@@ -178,20 +290,24 @@ class GraphAttention(T5Attention):
         if device is None:
             device = self.relative_attention_bias.weight.device
 
-        # >>> different in GLM implementation
-        # In GLM code, relative_position is not updated, once it's created
+        # In GLM code, once created, relative_position is not updated anymore
         # - does a whole given sequence use only one relative_position?
         # If so, becomes rather *absolute*_position? On the other hand, "In this work we thus focus on relative PE."
         if relative_position is None:
             logging.debug("creating relative_position from scratch")
+            print("creating relative_position from scratch")
+            # shape: (seq_length, 1)
             context_position = torch.arange(query_length, dtype=torch.long, device=device)[:, None]
+            # shape: (1, seq_length)
+            memory_position = torch.arange(key_length, dtype=torch.long, device=device)[None, :]
+            relative_position = memory_position - context_position
+            logging.debug(f"received relative_position of shape {relative_position.shape}")
         else:
-            logging.debug("using passed relative_position")
-            # was commented out in GLM implementation
-            context_position = relative_position[:, None].to(device)
-        memory_position = torch.arange(key_length, dtype=torch.long, device=device)[None, :]
-        relative_position = memory_position - context_position
-        # <<< different in GLM implementation
+            logging.debug(f"using passed relative_position: {relative_position.shape}")
+            print("using passed relative_position")
+            # was commented out in GLM implementation, using it leads to shape mismatch later on
+            # as context_position unsqueezes relative_position again
+            # context_position = relative_position[:, None].to(device) # shape: (seq_length, 1)
 
         relative_position_bucket = self._relative_position_bucket(
             relative_position,  # (query_length, key_length)
@@ -286,6 +402,8 @@ class GraphAttention(T5Attention):
             if mask:
                 position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
 
+        print("scores", scores.shape)
+        print("position_bias", position_bias.shape)
         scores += position_bias
 
         if sparsity_mask is not None:
@@ -349,7 +467,7 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
     Models (GLM) project while incorporating the original code of T5 whenever possible.
     The configuration is simplified to gGLM and focuses on the relation classification task.
     """
-    def __init__(self, config: T5Config):
+    def __init__(self, config: T5Config, max_seq_len: int = 512):
         if config.is_decoder:
             warnings.warn("Decoder is not implemented, setting is_decoder to False.")
         config.is_decoder = False
@@ -358,6 +476,7 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
             config.use_cache = False
         super().__init__(config, layer_idx=None)
         self.model_name_size: str = self.config.model_name_size
+        self.max_seq_len = max_seq_len
 
         var = "rel_attn_num_additional_buckets"
         assert hasattr(config, var), \
@@ -374,6 +493,8 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
             self.t5.shared.embedding_dim, self.config.num_classes, bias=True
         )
         self.softmax = nn.Softmax(dim=-1)
+
+        self.labels = None  # to be set externally if needed
 
     def configure_t5(self):
         """ Configure the T5 model to fit the needs of this implementation """
@@ -405,11 +526,15 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
                 self.config, has_relative_attention_bias=first_layer
             )
 
-    def forward(self, **kwargs: Tensor) -> Tensor:
+    @Decorators.graph_preprocessing
+    def forward(self, *args: Tensor) -> Tensor:
         """ Forward method of the classifier """
-        logging.debug("running on device:", next(self.parameters()).device)
-        args = ["input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"]
-        assert set(args) == set(kwargs.keys()), f"Expected keys: {args}, but got {kwargs.keys()}"
+        logging.debug("running on device:", self.device)
+        assert len(args) == 4, f"Expected 4 arguments, but got {len(args)}"
+        names = ["input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"]
+        kwargs = {name: args[i] for i, name in enumerate(names)}
+        for name, tensor in kwargs.items():
+            print(f"{name} shape: {tensor.shape}")
 
         logging.debug('T5 encoder model is called')
         # outputs: (last_hidden_state, hidden_states, attentions)
@@ -602,16 +727,8 @@ if __name__ == "__main__":
 
     batch_size = 2
     seq_length = 10
-
-    input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_length))
-    relative_position = torch.randint(-4, 4, (seq_length, seq_length))
-    sparsity_mask = torch.randint(0, 2, (batch_size, seq_length, seq_length)).bool()
-    use_additional_bucket = torch.randint(0, 2, (batch_size, seq_length, seq_length)).bool()
-
-    outputs = model(
-        input_ids=input_ids,
-        relative_position=relative_position,
-        sparsity_mask=sparsity_mask,
-        use_additional_bucket=use_additional_bucket,
-    )
+    # this script is not in the root folder, so paths should be relative
+    data_path = "GraphLanguageModels/data/rebel_dataset/REBEL_AMR_TRIPLES.train.hdf5"
+    data = load_hdf5_data(data_path, num_samples=10)
+    outputs = model(data, use_amr=False)
     print("outputs", outputs.shape)  # should be (batch_size, seq_length, num_classes)

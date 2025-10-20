@@ -13,7 +13,7 @@ def objective(trial):
     # === 2. Construct command for training ===
     cmd = [
         "python", "experiments/train.py",
-        "--train_data", "data/REBEL_AMR_TRIPLES.train.hdf5",
+        "--train_data", "baselines/GraphLanguageModels/data/rebel_dataset/REBEL_AMR_TRIPLES.train.hdf5",
         "--model_name", "t5-small",
         "--output_dir", f"models/optuna_trial_{trial.number}",
         "--num_epochs", str(num_epochs),
