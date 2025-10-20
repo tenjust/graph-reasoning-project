@@ -6,7 +6,7 @@ igraph
 penman
 nltk
 unidecode
-torch
 h5py
+datasets
 optuna
 scikit-optimize
