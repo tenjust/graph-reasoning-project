@@ -23,26 +23,6 @@ def clamp_inf_values(states: Tensor) -> Tensor:
     return states
 
 
-def shape(states, n_heads, key_value_proj_dim):
-    """ Project states to (batch_size, n_heads, seq_length, key_value_proj_dim) """
-    return states.view(batch_size, -1, n_heads, key_value_proj_dim).transpose(1, 2)
-
-
-def project(hidden_states, proj_layer):
-    """ Projects hidden states correctly to key/query states """
-    # self-attn
-    # (batch_size, n_heads, key_length, dim_per_head)
-    hidden_states = shape(proj_layer(hidden_states))
-    # self-attn, too, but past_key_value is never used in GLM
-    # hidden_states = torch.cat([past_key_value, hidden_states], dim=2)
-    return hidden_states
-
-
-def unshape(states, inner_dim):
-    """ Reshape states back to (batch_size, seq_length, inner_dim) """
-    return states.transpose(1, 2).contiguous().view(batch_size, -1, inner_dim)
-
-
 class Decorators:
     @staticmethod
     def check_stack_kwargs(stack_forward):
@@ -116,7 +96,6 @@ class GraphAttention(T5Attention):
             whether to use additional bucket for the corresponding position. If None, no additional buckets are used.
         :return: Tensor of shape (query_length, key_length) with bucketed relative positions
         """
-        print("bidirectional", bidirectional)
         if not self.relative_attention_num_buckets:
             # num_buckets: Tensor = 32,
             raise ValueError(f"relative_attention_num_buckets must be > 0, not {self.relative_attention_num_buckets}")
@@ -263,11 +242,11 @@ class GraphAttention(T5Attention):
         batch_size, seq_length = hidden_states.shape[:2]
 
         # get query states: (batch_size, n_heads, seq_length, dim_per_head)
-        query_states = shape(self.q(hidden_states), self.n_heads, self.key_value_proj_dim)
+        query_states = self.shape(self.q(hidden_states))
 
         # get key/value states
-        key_states = project(hidden_states, self.k)
-        value_states = project(hidden_states, self.v)
+        key_states = self.project(hidden_states, self.k)
+        value_states = self.project(hidden_states, self.v)
 
         # compute scores, equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states), compatible with onnx op>9
         scores = torch.matmul(query_states, key_states.transpose(3, 2))
@@ -337,13 +316,30 @@ class GraphAttention(T5Attention):
         if layer_head_mask:
             attn_weights = attn_weights * layer_head_mask
 
-        attn_output = unshape(torch.matmul(attn_weights, value_states), self.inner_dim)
+        attn_output = self.unshape(torch.matmul(attn_weights, value_states))
         attn_output = self.o(attn_output) # (batch_size, seq_length, dim)
 
         outputs = (attn_output, position_bias)
         if output_attentions:
             outputs += (attn_weights,)
         return outputs # (attn_output, position_bias, opt: attn_weights)
+
+    def shape(self, states):
+        """ Project states to (batch_size, n_heads, seq_length, key_value_proj_dim) """
+        return states.view(batch_size, -1, self.n_heads, self.key_value_proj_dim).transpose(1, 2)
+
+    def unshape(self, states):
+        """ Reshape states back to (batch_size, seq_length, inner_dim) """
+        return states.transpose(1, 2).contiguous().view(batch_size, -1, self.inner_dim)
+
+    def project(self, hidden_states, proj_layer):
+        """ Projects hidden states correctly to key/query states """
+        # self-attn
+        # (batch_size, n_heads, key_length, dim_per_head)
+        hidden_states = self.shape(proj_layer(hidden_states))
+        # self-attn, too, but past_key_value is never used in GLM
+        # hidden_states = torch.cat([past_key_value, hidden_states], dim=2)
+        return hidden_states
 
 
 class Graph2GraphRelationClassifier(PreTrainedModel):
