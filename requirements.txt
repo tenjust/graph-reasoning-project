@@ -8,3 +8,5 @@ nltk
 unidecode
 h5py
 datasets
+optuna
+scikit-optimize
