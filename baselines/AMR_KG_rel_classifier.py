@@ -61,12 +61,12 @@ def preprocess(data_instance: dict, tokenizer: T5TokenizerFast, use_amr: bool) -
         raise NotImplementedError("Using AMR_based_triplets is not supported yet, sorry!")
     elif use_amr and "AMR_based_triplets" not in data_instance:
         warnings.warn(
-            "use_amr is True, but no AMR_based_triplets found in data_instance! (not supported yet)"
+            "use_amr is True, but no AMR_based_triplets found in data_instance! "
+            "(not supported yet)"
         )
-    if any(key not in data_instance for key in ["triplets", "text", "mask_origin", "label"]):
-        raise ValueError(
-            "Data instance must contain 'triplets', 'text', 'mask_origin', and 'label' fields."
-        )
+    args = ["triplets", "text", "mask_origin", "label"]
+    if any(arg not in data_instance for arg in args):
+        raise ValueError(f"Data instance must contain fields: {args}")
     kg = Graph(data_instance['triplets'])
     processed_instance = data_to_dataT5(
         graph=kg,
@@ -126,6 +126,7 @@ class Decorators:
 
             :param self: model instance
             :param data: input data instance or batch of instances
+            :param use_amr: whether to use AMR-based triplets (not supported yet)
             :return: tensors of preprocessed inputs for the model are passed to forward_fn
             """
             if type(data) is list:
@@ -133,7 +134,7 @@ class Decorators:
                 data = [preprocess(data_instance, self.tokenizer, use_amr) for data_instance in data]
 
                 batch_max_seq_len = max([d.input_ids.shape[1] for d in data])
-                max_seq_len = min(self.max_seq_len, batch_max_seq_len)
+                max_seq_len = min(self.config.model_max_length, batch_max_seq_len)
 
                 input_ids = torch.ones(
                     (len(data), max_seq_len), dtype=torch.long, device=self.device
@@ -294,8 +295,7 @@ class GraphAttention(T5Attention):
         # - does a whole given sequence use only one relative_position?
         # If so, becomes rather *absolute*_position? On the other hand, "In this work we thus focus on relative PE."
         if relative_position is None:
-            logging.debug("creating relative_position from scratch")
-            print("creating relative_position from scratch")
+            logging.debug("creating relative position from scratch")
             # shape: (seq_length, 1)
             context_position = torch.arange(query_length, dtype=torch.long, device=device)[:, None]
             # shape: (1, seq_length)
@@ -304,7 +304,6 @@ class GraphAttention(T5Attention):
             logging.debug(f"received relative_position of shape {relative_position.shape}")
         else:
             logging.debug(f"using passed relative_position: {relative_position.shape}")
-            print("using passed relative_position")
             # was commented out in GLM implementation, using it leads to shape mismatch later on
             # as context_position unsqueezes relative_position again
             # context_position = relative_position[:, None].to(device) # shape: (seq_length, 1)
@@ -353,7 +352,7 @@ class GraphAttention(T5Attention):
         :param use_additional_bucket: [MP] whether to use additional buckets for the attention. If `None`, only standard positional encodings will be used. If not `None`, additional buckets will be used for the relative position. It is a tensor of shape [batch_size, query_length, key_length]. A value of False means that the corresponding position is a standard relative position, and a value of True means that the corresponding additional bucket should be used.
         """
         GraphAttention.FORWARD_RUNS += 1
-        logging.debug("running GraphAttention forward, run", GraphAttention.FORWARD_RUNS)
+        logging.debug(f"running GraphAttention forward, run {GraphAttention.FORWARD_RUNS}")
 
         batch_size, seq_length = hidden_states.shape[:2]
 
@@ -386,7 +385,7 @@ class GraphAttention(T5Attention):
                     position_bias = self.compute_bias(
                         seq_length, seq_length, device=scores.device, additional_bucket_id=None)
                 else:
-                    logging.debug("relative_position is passed to GraphAttention forward")
+                    logging.debug("relative position is passed to GraphAttention forward")
                     # use_additional_bucket, relative_position: (batch_size, seq_length, key_length)
                     position_bias = []
                     for position, bucket_ids in zip(relative_position, use_additional_bucket):
@@ -402,8 +401,6 @@ class GraphAttention(T5Attention):
             if mask:
                 position_bias = position_bias + mask  # (batch_size, n_heads, seq_length, key_length)
 
-        print("scores", scores.shape)
-        print("position_bias", position_bias.shape)
         scores += position_bias
 
         if sparsity_mask is not None:
@@ -444,10 +441,12 @@ class GraphAttention(T5Attention):
 
     def shape(self, states):
         """ Project states to (batch_size, n_heads, seq_length, key_value_proj_dim) """
+        batch_size = states.size(0)
         return states.view(batch_size, -1, self.n_heads, self.key_value_proj_dim).transpose(1, 2)
 
     def unshape(self, states):
         """ Reshape states back to (batch_size, seq_length, inner_dim) """
+        batch_size = states.size(0)
         return states.transpose(1, 2).contiguous().view(batch_size, -1, self.inner_dim)
 
     def project(self, hidden_states, proj_layer):
@@ -467,32 +466,35 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
     Models (GLM) project while incorporating the original code of T5 whenever possible.
     The configuration is simplified to gGLM and focuses on the relation classification task.
     """
-    def __init__(self, config: T5Config, max_seq_len: int = 512):
+    def __init__(self, config: T5Config):
         if config.is_decoder:
-            warnings.warn("Decoder is not implemented, setting is_decoder to False.")
+            warnings.warn("decoder is not implemented, setting 'is_decoder' to False.")
         config.is_decoder = False
         if config.use_cache:
             warnings.warn("use_cache is not needed for encoder-only model, setting use_cache to False.")
             config.use_cache = False
         super().__init__(config, layer_idx=None)
         self.model_name_size: str = self.config.model_name_size
-        self.max_seq_len = max_seq_len
 
         var = "rel_attn_num_additional_buckets"
         assert hasattr(config, var), \
             f"For running Graph Language Model's method T5Config must have attribute '{var}'"
 
         self.tokenizer = T5TokenizerFast.from_pretrained(
-            self.model_name_size, model_max_length=self.config.model_max_length
+            self.model_name_size,
+            model_max_length=self.config.model_max_length,
         )
         self.t5 = T5EncoderModel.from_pretrained(
-            self.model_name_size, config=self.config, ignore_mismatched_sizes=True)
+            self.model_name_size, config=self.config, ignore_mismatched_sizes=True,
+        )
         self.configure_t5()
 
         self.classifier = nn.Linear(
             self.t5.shared.embedding_dim, self.config.num_classes, bias=True
         )
         self.softmax = nn.Softmax(dim=-1)
+
+        logging.debug(f"model architecture:\n{self}")
 
         self.labels = None  # to be set externally if needed
 
@@ -528,14 +530,16 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
 
     @Decorators.graph_preprocessing
     def forward(self, *args: Tensor) -> Tensor:
-        """ Forward method of the classifier """
-        logging.debug("running on device:", self.device)
+        """
+        Forward method of the classifier. One is expected to pass loaded rebel data
+        and a flag for whether to use AMR triples for guidance instead of the raw text.
+        The data will be preprocessed and converted into tensors suitable for the model
+        in the decorated graph_preprocessing method.
+        """
+        logging.debug(f"running on device: {self.device}")
         assert len(args) == 4, f"Expected 4 arguments, but got {len(args)}"
         names = ["input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"]
         kwargs = {name: args[i] for i, name in enumerate(names)}
-        for name, tensor in kwargs.items():
-            print(f"{name} shape: {tensor.shape}")
-
         logging.debug('T5 encoder model is called')
         # outputs: (last_hidden_state, hidden_states, attentions)
         output = self.t5.encoder(**kwargs)  # (batch_size, seq_len, hidden_size)
@@ -571,7 +575,9 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         :param return_dict: [Optional] bool
         :return: BaseModelOutputWithPastAndCrossAttentions
         """
-        logging.debug(f"Stacking forward method for T5EncoderModel with arguments: {kwargs}")
+        logging.debug(
+            f"Stacking forward method for T5EncoderModel with arguments: {list(kwargs.keys())}"
+        )
         input_ids, inputs_embeds = kwargs.pop("input_ids", None), kwargs.pop("inputs_embeds", None)
         input_ids_passed = input_ids is not None
         inputs_embeds_passed = inputs_embeds is not None
@@ -580,15 +586,16 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
                 f"You cannot specify both input_ids and inputs_embeds at the same time"
             )
         elif input_ids_passed:
+            logging.debug("no inputs_embeds, creating them from input_ids")
             input_shape = input_ids.size()
             input_ids = input_ids.view(-1, input_shape[-1])
-            logging.debug("no inputs_embeds, creating them from input_ids")
             input_ids = input_ids.to(self.device)
             inputs_embeds = self.embed_tokens(input_ids)
         elif inputs_embeds_passed:
             input_shape = inputs_embeds.size()[:-1]
         else:
             raise ValueError(f"You have to specify either input_ids or inputs_embeds")
+
 
         batch_size, seq_length = input_shape
         # TODO: seq_length might need to be masked after all
@@ -608,13 +615,17 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         head_mask = self.get_head_mask(kwargs.pop("head_mask", None), self.config.num_layers)
 
         args_to_forward = ("relative_position", "sparsity_mask", "use_additional_bucket")
-        assert set(args_to_forward) == set(kwargs.keys()), \
-            f"Obligatory keys were lost: {set(args_to_forward).intersection(kwargs.keys())}"
+        passed_args = set(kwargs.keys())
+        assert set(args_to_forward) == passed_args, \
+            f"Obligatory keys were not passed: {set(args_to_forward).intersection(passed_args)}"
 
         for i, block in enumerate(self.block):
             assert type(block) == T5Block, "Expected T5Block, got {}".format(type(block))
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
+            # layer_outputs is a tuple with the following fields:
+            # hidden-states, (self-attn position bias), (self-attn weights)
+            # key-value-states are removed (used for cache, not needed here)
             layer_outputs = block.forward(
                 hidden_states=hidden_states,
                 mask=extended_attention_mask, # attention_mask renamed to mask
@@ -625,15 +636,10 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
                 output_attentions=output_attentions,
                 **kwargs,
             )
-
-            # layer_outputs is a tuple with the following fields:
-            # hidden-states, (key-value-states), (self-attention position bias), (self-attention weights), (cross-attention position bias), (cross-attention weights)
-            # key-value-states are always set to None (used for cache, not needed here)
-            layer_outputs = layer_outputs[:1] + (None,) + layer_outputs[1:]
-            hidden_states, present_key_value_state = layer_outputs[:2]
+            hidden_states = layer_outputs[0]
 
             if output_attentions:
-                all_attentions += (layer_outputs[3],)
+                all_attentions += (layer_outputs[2],)
 
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -646,10 +652,10 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         if not return_dict:
             variables = [
                 hidden_states,
-                None, # present_key_value_states
+                # no present_key_value_states
                 all_hidden_states,
                 all_attentions,
-                None, # all_cross_attentions
+                # no all_cross_attentions
             ]
             return tuple(v for v in variables if v)
         return BaseModelOutputWithPastAndCrossAttentions(
@@ -719,8 +725,12 @@ if __name__ == "__main__":
     config.rel_attn_num_additional_buckets = 2  # number of additional buckets for graph-to-graph attention
     config.use_cache = False
 
+    logging.basicConfig(
+        level=logging.INFO,                    # or DEBUG for more detail
+        format="%(asctime)s [%(levelname)s]: %(message)s"
+    )
+
     model = Graph2GraphRelationClassifier(config)
-    print(model)
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model.to(device)
