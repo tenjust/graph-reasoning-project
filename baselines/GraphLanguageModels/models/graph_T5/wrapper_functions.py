@@ -228,8 +228,12 @@ def _get_str2tok(g:Graph, tokenizer: T5TokenizerFast) -> dict[str, list[int]]:
     Get a dictionary that maps strings to tokens.
     """
     # tokenize concepts and relations
-    c_tok = tokenizer([r2nl(c) for c in g.concepts], padding=False)['input_ids']
-    r_tok = tokenizer([r2nl(r) for r in g.relations], padding=False)['input_ids']
+    c_tok = tokenizer(
+        [r2nl(c) for c in g.concepts], padding=False, max_length=tokenizer.model_max_length, truncation=True
+    )['input_ids']
+    r_tok = tokenizer(
+        [r2nl(r) for r in g.relations], max_length=tokenizer.model_max_length, truncation=True
+    )['input_ids']
 
     tokens = c_tok + r_tok
     node_names = g.concepts + g.relations  # these are not necessarily all nodes in the Levi Graph, as relations can occur more than once
@@ -538,7 +542,11 @@ def add_text_to_graph_data(data, text, tokenizer, use_text):
     if use_text in {'False', '', False, None}:
         return None
 
-    text_seq = torch.tensor(tokenizer(text, padding=False)['input_ids']).unsqueeze(0)
+    text_seq = torch.tensor(
+        tokenizer(
+            text, padding=False, max_length=tokenizer.model_max_length, truncation=True
+        )['input_ids']
+    ).unsqueeze(0)
     new_input_ids = torch.cat([data.input_ids, text_seq], dim=1)
 
     old_seq_len = data.input_ids.shape[1]
