@@ -1,10 +1,12 @@
 import json
+import logging
+
 import h5py
 import torch
 from torch.utils.data import Dataset
 from transformers import Trainer, TrainingArguments, T5Config
 
-from baselines.AMR_KG_rel_classifier import Graph2GraphRelationClassifier
+from baselines.AMR_KG_rel_classifier import Graph2GraphRelationClassifier, preprocess
 
 
 # ==============================
@@ -25,33 +27,15 @@ class RebelAMRDataset(Dataset):
 
     def __getitem__(self, idx):
         item = json.loads(self.data[idx].decode("utf-8"))
-        text = item["text"]
-        label = item.get("label_str", "None")
-
-        # Optionally add AMR info to input text
-        if self.use_amr and "AMR_based_triplets" in item:
-            amr_info = " ".join([" ".join(triplet) for triplet in item["AMR_based_triplets"]])
-            text = text + " [AMR] " + amr_info
-
-        source = self.tokenizer(
-            text,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-        target = self.tokenizer(
-            label,
-            truncation=True,
-            padding="max_length",
-            max_length=32,
-            return_tensors="pt",
-        )
+        data = preprocess(item, self.tokenizer, self.use_amr)
 
         return {
-            "input_ids": source["input_ids"].squeeze(),
-            "attention_mask": source["attention_mask"].squeeze(),
-            "labels": target["input_ids"].squeeze(),
+            "input_ids": data.input_ids,
+            "relative_position": data.relative_position,
+            "sparsity_mask": data.sparsity_mask,
+            "use_additional_bucket": data.use_additional_bucket,
+            # "indices": data.indices,
+            "labels": data.label,
         }
 
 
@@ -74,32 +58,44 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_data", type=str, required=True)
+    # parser.add_argument("--train_data", type=str, required=True)
     parser.add_argument("--val_data", type=str, default=None)
     parser.add_argument("--model_name", type=str, default="t5-small")
     parser.add_argument("--output_dir", type=str, default="./t5_amr_rebel_output")
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--num_epochs", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=5e-5)
     parser.add_argument("--max_length", type=int, default=512)
-    parser.add_argument("--use_amr", action="store_true", help="Include AMR-based triplets in input text")
+    parser.add_argument("--use_amr", action="store_true", help="Input AMR-based triplets instead of the raw text")
     args = parser.parse_args()
 
+    logging.basicConfig(
+        level=logging.INFO,  # or DEBUG for more detail
+        format="%(asctime)s [%(levelname)s]: %(message)s"
+    )
+
     # Load tokenizer and model
-    # tokenizer = T5Tokenizer.from_pretrained(args.model_name)
-    # model = T5ForConditionalGeneration.from_pretrained(args.model_name)
     config = T5Config.from_pretrained("t5-small")
+    config.num_classes = 5
+    config.model_name_size = "t5-small"
+    config.model_max_length = 512
+    config.rel_attn_num_additional_buckets = 2  # number of additional buckets for graph-to-graph attention
+    config.use_cache = False
+
     model = Graph2GraphRelationClassifier(config)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model.to(device)
 
     # Load dataset
-    train_ds, val_ds = load_dataset(model.tokenizer, args.train_data, args.val_data, args.max_length, args.use_amr)
+    train_path = "baselines/GraphLanguageModels/data/rebel_dataset/REBEL_AMR_TRIPLES.train.hdf5"
+    train_ds = RebelAMRDataset(model.tokenizer, train_path, split="train", max_length=args.max_length, use_amr=args.use_amr)
+    val_path = "baselines/GraphLanguageModels/data/rebel_dataset/REBEL_AMR_TRIPLES.val.hdf5"
+    val_ds = RebelAMRDataset(model.tokenizer, val_path, split="val", max_length=args.max_length, use_amr=args.use_amr)
 
     # Define training arguments
     training_args = TrainingArguments(
         output_dir=args.output_dir,
-        eval_strategy="epoch" if val_ds else "no",
+        eval_strategy="epoch", # if val_ds else "no",
         learning_rate=args.learning_rate,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
@@ -112,6 +108,16 @@ def main():
         load_best_model_at_end=bool(val_ds),
     )
 
+    def compute_loss(model, data):
+        """Custom loss function to handle model outputs and labels in batches."""
+        labels = data.get("labels")
+        logits = model(**data)
+        predictions = model.get_classes(logits)
+        print("predictions GGG", predictions)
+        loss_fct = torch.nn.CrossEntropyLoss()
+        loss = loss_fct(predictions, labels)
+        return loss
+
     # Trainer
     trainer = Trainer(
         model=model,
@@ -119,6 +125,7 @@ def main():
         train_dataset=train_ds,
         eval_dataset=val_ds,
         tokenizer=model.tokenizer,
+        compute_loss_func=compute_loss,
     )
 
     # Train
