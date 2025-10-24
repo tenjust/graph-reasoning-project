@@ -122,14 +122,17 @@ def preprocess(data_instance: dict, tokenizer: T5TokenizerFast, use_amr: bool) -
 
 
 class Decorators:
-    """ Collection of decorators for GraphT5 model methods """
+    """ Collection of decorators for Graph2GraphRelationClassifier model methods """
     @staticmethod
     def check_stack_kwargs(stack_forward):
         """ Wrapper to call the T5Stack forward method with the correct arguments """
         def inner_fn(self, **kwargs):
             # Optional arguments:
-            # "head_mask", "attention_mask", "inputs_embeds", "output_attentions", "output_hidden_states", "return_dict"
-            obligatory_args = {"input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"}
+            # "head_mask", "attention_mask", "inputs_embeds", "output_attentions",
+            # "output_hidden_states", "return_dict"
+            obligatory_args = {
+                "input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"
+            }
             key_args = set(kwargs.keys())
             assert obligatory_args.issubset(key_args), \
                 f"Expected keys: {obligatory_args}, but got {key_args}"
@@ -201,20 +204,20 @@ class GraphAttention(T5Attention):
     FORWARD_RUNS = 0  # class variable to count the number of forward runs
 
     def __init__(self, config: T5Config, has_relative_attention_bias: bool = False):
-        # Relative attention buckets are increased by the number of additional buckets
         rel_attn_num_additional_buckets = config.to_dict().get('rel_attn_num_additional_buckets', 0)
+        # Relative attention buckets are increased by the number of additional buckets
         config.relative_attention_num_buckets += rel_attn_num_additional_buckets
 
         super().__init__(config, has_relative_attention_bias)
-        self.model_name_size = config.model_name_size
         self.rel_attn_num_additional_buckets: int = rel_attn_num_additional_buckets
+        self.model_name_size = config.model_name_size
         self.default_num_buckets: int = (
                 self.relative_attention_num_buckets - self.rel_attn_num_additional_buckets
         )
 
-        # Removed the possibility from Moritz's code for init_additional_buckets_from to be None,
+        # Removed the possibility from the GLM project for init_additional_buckets_from to be None,
         # as that would lead to random initialization of the additional buckets, while we want to
-        # implement the version with infinity
+        # implement the version with initialization at infinity
         self.additional_buckets_init_dist = torch.inf
         if self.has_relative_attention_bias:
             self.init_relative_position_bias()
@@ -227,21 +230,24 @@ class GraphAttention(T5Attention):
     ) -> Tensor:
         """
         Method overridden to support additional buckets for global graph-to-graph relative position.
-        GLM comment: Copied from transformers.models.t5.modeling_t5.T5Attention with slight modifications
+        [GLM] Copied from transformers.models.t5.modeling_t5.T5Attention with slight modifications
 
         :param relative_position: Tensor of shape (query_length, key_length) with relative positions
         :param bidirectional: whether the attention is bidirectional
-        :param additional_bucket_id: Tensor of shape (query_length, key_length) with a mask - boolean values indicate
-            whether to use additional bucket for the corresponding position. If None, no additional buckets are used.
+        :param additional_bucket_id: Tensor of shape (query_length, key_length) with a mask -
+                                     boolean values indicate whether to use additional bucket for the
+                                     corresponding position. If None, no additional buckets are used.
         :return: Tensor of shape (query_length, key_length) with bucketed relative positions
         """
         if not self.relative_attention_num_buckets:
             # num_buckets: Tensor = 32,
-            raise ValueError(f"relative_attention_num_buckets must be > 0, not {self.relative_attention_num_buckets}")
+            raise ValueError(f"relative_attention_num_buckets must be > 0, "
+                             f"not {self.relative_attention_num_buckets}")
 
         if not self.relative_attention_max_distance:
             # max_distance: Tensor = 128,
-            raise ValueError(f"relative_attention_max_distance must be > 0, not {self.relative_attention_max_distance}")
+            raise ValueError(f"relative_attention_max_distance must be > 0, "
+                             f"not {self.relative_attention_max_distance}")
 
         # relative_position shape: (query_length, key_length)
         relative_buckets = T5Attention._relative_position_bucket(
@@ -254,19 +260,24 @@ class GraphAttention(T5Attention):
         # only for positions corresponding to True in additional_bucket_id
         if additional_bucket_id is not None:
             # In GLM:
-            # `relative_buckets[use_additional_bucket] = relative_position[use_additional_bucket] + num_buckets`
-            # This line never worked here (caused index issues, as values in relative_buckets ended up exceeding
-            # the Embedding size) for a reason I couldn't discover, so I followed the idea of additional buckets
-            # taking the most distant position in gGLM
-            relative_buckets[additional_bucket_id] = self.relative_attention_num_buckets - 1  # to keep indexing safe
+            # `relative_buckets[use_additional_bucket] = \
+            #                               relative_position[use_additional_bucket] + num_buckets`
+            # This line never worked here (caused index issues, as values in relative_buckets
+            # ended up exceeding the Embedding size) for a reason I couldn't discover, so I followed
+            # the idea of additional buckets taking the most distant position in gGLM
+
+            # -1 to keep indexing safe
+            relative_buckets[additional_bucket_id] = self.relative_attention_num_buckets - 1
         return relative_buckets
 
     def init_relative_position_bias(self) -> None:
         """
-        Initializes parameters for relative position bias. This is necessary if additional buckets are used,
-        as then the weights are not initialized automatically when calling `from_pretrained`.
+        [GLM] Initializes parameters for relative position bias. This is necessary if additional
+        buckets are used, as then the weights are not initialized automatically when calling
+        `from_pretrained`.
 
-        The relative position bias is initialized from a pretrained T5 model (the same instance as the one being loaded).
+        The relative position bias is initialized from a pretrained T5 model
+        (the same instance as the one being loaded).
         """
         logging.debug('init normal buckets')
         if self.is_decoder:
@@ -302,24 +313,27 @@ class GraphAttention(T5Attention):
         additional_bucket_id: int | Tensor = None,
     ) -> Tensor:
         """
-        Compute binned relative position bias.
+        [T5] Compute binned relative position bias.
 
         :param query_length: length of the query sequence
         :param key_length: length of the key sequence
         :param device: device to perform the computation on
         :param relative_position: Tensor of shape (query_length, key_length) with relative positions.
             If None, relative positions are computed as in a standard sequence-to-sequence model.
-        :param additional_bucket_id: Tensor of shape (query_length, key_length) with a mask - boolean values indicate
+        :param additional_bucket_id: Tensor of shape (query_length, key_length) with a mask -
+                                     boolean values indicate
         :return: whether to use additional bucket for the corresponding position.
         """
         if query_length != key_length:
-            raise ValueError("The length of query and key are different!") # => then it makes sense to have to vars
+            raise ValueError("The length of query and key are different!")
+            # => then it makes sense to have to vars
         if device is None:
             device = self.relative_attention_bias.weight.device
 
         # In GLM code, once created, relative_position is not updated anymore
         # - does a whole given sequence use only one relative_position?
-        # If so, becomes rather *absolute*_position? On the other hand, "In this work we thus focus on relative PE."
+        # If so, becomes rather *absolute*_position? On the other hand,
+        # "In this work we thus focus on relative PE."
         if relative_position is None:
             logging.debug("creating relative position from scratch")
             # shape: (seq_length, 1)
@@ -330,8 +344,9 @@ class GraphAttention(T5Attention):
             logging.debug(f"received relative_position of shape {relative_position.shape}")
         else:
             logging.debug(f"using passed relative_position: {relative_position.shape}")
-            # was also commented out in GLM implementation, using it leads to shape mismatch
-            # later on as context_position unsqueezes relative_position again
+            # Using the following line leads to shape mismatch later on as context_position
+            # unsqueezes relative_position again
+            # (It was also commented out in GLM implementation)
             # context_position = relative_position[:, None].to(device) # shape: (seq_length, 1)
 
         relative_position_bucket = self._relative_position_bucket(
@@ -341,7 +356,8 @@ class GraphAttention(T5Attention):
         )
         max_rel_pos = relative_position_bucket.max()
         assert max_rel_pos < self.relative_attention_num_buckets, \
-            f"Max bucket index {max_rel_pos} exceeds number of buckets {self.relative_attention_num_buckets}"
+            (f"Max bucket index {max_rel_pos} exceeds number of buckets "
+             f"{self.relative_attention_num_buckets}")
 
         values = self.relative_attention_bias(relative_position_bucket)
         # values.shape (query_length, key_length, num_heads)
@@ -363,19 +379,44 @@ class GraphAttention(T5Attention):
         use_additional_bucket=None,  # new to GLM
     ):
         """
-        Self-attention (if key_value_states is None) or attention over source sentence (provided by key_value_states).
-        GLM new, differs from the original. Due to decoder not being used, only self-attention is calculated (right?).
+        [GLM] Self-attention (if key_value_states is None) or attention over source sentence
+        (provided by key_value_states). Due to decoder not being used, only self-attention is calculated.
 
-        :param hidden_states: input to the attention layer. It is a tensor of shape [batch_size, seq_length, dim].
-        :param mask: attention mask. It is a tensor of shape (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
-        :param position_bias: position bias for the attention. If `None`, it will be computed as in a standard sequence-to-sequence model. If not `None`, it will be used as the position bias for the attention. It is a tensor of shape [batch_size, n_heads, query_length, key_length].
+        :param hidden_states: input to the attention layer. It is a tensor of shape
+                              [batch_size, seq_length, dim].
+        :param mask: attention mask. It is a tensor of shape (batch_size, key_length) (non-causal)
+                     or (batch_size, key_length, key_length)
+        :param position_bias: position bias for the attention. If `None`, it will be computed as
+                              in a standard sequence-to-sequence model. If not `None`, it will be
+                              used as the position bias for the attention. It is a tensor of shape
+                              [batch_size, n_heads, query_length, key_length].
         :param query_length: length of the query sequence
         :param output_attentions: whether to output attention weights
         :param use_cache: whether to use cache (not used in GLM)
-        :param layer_head_mask: head mask for the attention. If `None`, it will be computed as in a standard sequence-to-sequence model. If not `None`, it will be used as the head mask for the attention. It is a tensor of shape [n_heads].
-        :param relative_position: [MP] relative position for the attention. If `None`, it will be computed as in a standard sequence-to-sequence model. If not `None`, it will be used as the relative position for the attention. It is a tensor of shape [batch_size, query_length, key_length].
-        :param sparsity_mask: [MP] sparsity mask for the attention. If `None`, it will be computed as in a standard sequence-to-sequence model. If not `None`, it will be used as the sparsity mask for the attention. It is a tensor of shape [batch_size, query_length, key_length]. A value of 1 means that the corresponding attention weight is not masked, and a value of 0 means that the corresponding attention weight is masked. Hence, the sparsity mask is a binary mask that (kind of) can be used like a multiplicative mask.
-        :param use_additional_bucket: [MP] whether to use additional buckets for the attention. If `None`, only standard positional encodings will be used. If not `None`, additional buckets will be used for the relative position. It is a tensor of shape [batch_size, query_length, key_length]. A value of False means that the corresponding position is a standard relative position, and a value of True means that the corresponding additional bucket should be used.
+        :param layer_head_mask: head mask for the attention. If `None`, it will be computed as in
+                                a standard sequence-to-sequence model. If not `None`, it will be
+                                used as the head mask for the attention. It is a tensor of shape
+                                [n_heads].
+        :param relative_position: [GLM] relative position for the attention. If `None`, it will be
+                                  computed as in a standard sequence-to-sequence model. If not `None`,
+                                  it will be used as the relative position for the attention.
+                                  It is a tensor of shape [batch_size, query_length, key_length].
+        :param sparsity_mask: [GLM] sparsity mask for the attention. If `None`, it will be computed
+                              as in a standard sequence-to-sequence model. If not `None`, it will
+                              be used as the sparsity mask for attention. It is a tensor of shape
+                              [batch_size, query_length, key_length]. A value of 1 means that
+                              the corresponding attention weight is not masked, and a value of
+                              0 means that the corresponding attention weight is masked. Hence,
+                              the sparsity mask is a binary mask that (kind of) can be used like a
+                              multiplicative mask.
+        :param use_additional_bucket: [GLM] whether to use additional buckets for the attention.
+                                      If `None`, only standard positional encodings will be used.
+                                      If not `None`, additional buckets will be used for the
+                                      relative position. It is a tensor of shape
+                                      [batch_size, query_length, key_length]. A value of False means
+                                      that the corresponding position is a standard relative position,
+                                      and a value of True means that the corresponding additional
+                                      bucket should be used.
         """
         GraphAttention.FORWARD_RUNS += 1
         logging.debug(f"running GraphAttention forward, run {GraphAttention.FORWARD_RUNS}")
@@ -389,22 +430,25 @@ class GraphAttention(T5Attention):
         key_states = self.project(hidden_states, self.k)
         value_states = self.project(hidden_states, self.v)
 
-        # compute scores, equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states), compatible with onnx op>9
+        # [T5] compute scores, equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states),
+        # compatible with onnx op>9
         scores = torch.matmul(query_states, key_states.transpose(3, 2))
 
-        if position_bias is None: # always true in GLM, because position_bias is hardcoded to None in T5Block.forward
+        # always true in GLM, because position_bias is hardcoded to None in T5Block.forward
+        if position_bias is None:
             logging.debug("no position_bias, computing it")
             if not self.has_relative_attention_bias:
                 logging.debug("no relative attention bias, initializing position_bias from zeros")
-                # new GLM? initialize from zeros for layers 1+
                 position_bias_shape = (batch_size, self.n_heads, seq_length, seq_length)
                 position_bias = torch.zeros(position_bias_shape, device=scores.device, dtype=scores.dtype)
-                # self.gradient_checkpointing is hardcoded to False in original code and GLM?
+                # self.gradient_checkpointing is hardcoded to False both in source code and GLM
                 if self.gradient_checkpointing and self.training:
                     position_bias.requires_grad = True
             else:
                 logging.debug("relative attention bias is passed to GraphAttention forward")
-                # new GLM stuff: relative_position is created in get_batch (train_LM.py) and passed through all the way to here
+                # new GLM stuff:
+                # relative_position is created in get_batch (train_LM.py)
+                # and passed through all the way to here
                 if relative_position is None:
                     logging.debug("relative position is not passed to GraphAttention forward")
                     assert use_additional_bucket is None
@@ -431,23 +475,23 @@ class GraphAttention(T5Attention):
 
         if sparsity_mask is not None:
             assert sparsity_mask.dtype == torch.bool, f"{relative_position.dtype} should be torch.bool"
-            # add extra dimension for heads and negate for indexing the masked positions
+            # [GLM] add extra dimension for heads and negate for indexing the masked positions
             sparsity_mask_mirorred = ~ sparsity_mask.unsqueeze(1)
             sparsity_mask_mirorred = sparsity_mask_mirorred.expand_as(position_bias)
 
             # >>> masked softmax >>>
-            # Comment from GLM: TODO: ?
-            # sparsity_mask is initialized in _get_graphT5_relativeposition_sparsitymask (wrapper_functions.py)
-            # this works in the backward pass, because potential nan values that the softmax produces
-            # in the forward pass are not used in backpropagation, because the "=" is independent of
-            # the value that the entry had previously. This is not the case for "+=", which is why we
-            # need to set the values to -inf instead of adding -inf.
+            # [GLM] Sparsity_mask is initialized in _get_graphT5_relativeposition_sparsitymask
+            # (wrapper_functions.py). This works in the backward pass, because potential nan values
+            # that the softmax produces in the forward pass are not used in backpropagation,
+            # because the "=" is independent of the value that the entry had previously.
+            # This is not the case for "+=", which is why we need to set the values to -inf
+            # instead of adding -inf.
             scores[sparsity_mask_mirorred] = float('-inf')
 
         # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.softmax(scores.float(), dim=-1).type_as(scores)
-        # replace nan values in the attention weights with 0. nan happens if all positions are masked for one token,
-        # as then all inputs to softmax are -inf for that token
+        # [GLM] replace nan values in the attention weights with 0. nan happens if all positions
+        # are masked for one token, as then all inputs to softmax are -inf for that token
         attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
         # <<< masked softmax <<<
 
@@ -466,17 +510,17 @@ class GraphAttention(T5Attention):
         return outputs # (attn_output, position_bias, opt: attn_weights)
 
     def shape(self, states):
-        """ Project states to (batch_size, n_heads, seq_length, key_value_proj_dim) """
+        """ [T5] Project states to (batch_size, n_heads, seq_length, key_value_proj_dim) """
         batch_size = states.size(0)
         return states.view(batch_size, -1, self.n_heads, self.key_value_proj_dim).transpose(1, 2)
 
     def unshape(self, states):
-        """ Reshape states back to (batch_size, seq_length, inner_dim) """
+        """ [T5] Reshape states back to (batch_size, seq_length, inner_dim) """
         batch_size = states.size(0)
         return states.transpose(1, 2).contiguous().view(batch_size, -1, self.inner_dim)
 
     def project(self, hidden_states, proj_layer):
-        """ Projects hidden states correctly to key/query states """
+        """ [T5] Projects hidden states correctly to key/query states """
         # self-attn
         # (batch_size, n_heads, key_length, dim_per_head)
         hidden_states = self.shape(proj_layer(hidden_states))
@@ -589,14 +633,7 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
 
         logging.debug('classifier is called')
         logits = self.classifier(output[0])  # (batch_size, seq_len, num_classes)
-        # print("classifier output logits:", logits.shape)  # floats
-        # logits = torch.cat([
-        #     get_embedding(sequence_embedding=logits[i], indices=indices[i], concept='<mask>',
-        #                   embedding_aggregation='mean')
-        #     for i in range(input_ids.shape[0])
-        # ], dim=0)
         predictions = self.get_classes(logits)  # scalar class predictions: (seq_len)
-        # print("predictions:", predictions.shape, predictions)
         return predictions
 
     def get_prob_distribution(self, logits: Tensor) -> Tensor:
@@ -652,7 +689,8 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         extended_attention_mask = None
         if kwargs.pop("attention_mask", None):
             attention_mask = torch.ones(batch_size, seq_length, device=inputs_embeds.device)
-            # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
+            # [GLM] We can provide a self-attention mask of dimensions
+            # [batch_size, from_seq_length, to_seq_length]
             # ourselves, in which case we just need to make it broadcastable to all heads.
             extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape)
 
@@ -694,7 +732,7 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.dropout(hidden_states)
 
-        # Add last layer
+        # [T5] Add last layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -738,7 +776,7 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
         hidden_states = self.feed_forward(hidden_states)
         hidden_states = clamp_inf_values(hidden_states)
 
-        # keep self-attention outputs and relative position weights
+        # [T5] keep self-attention outputs and relative position weights
         outputs = (hidden_states, *self_attn_outputs[1:])
         return outputs  # (hidden-states, ([self-attention] position_bias), ([self-attention: opt] attn_weights)
 
@@ -790,4 +828,4 @@ if __name__ == "__main__":
     data_path = "../data/rebel_dataset/REBEL_AMR_TRIPLES.train.hdf5"
     data = load_hdf5_data(data_path, split="train", num_samples=10)
     outputs = model(data, use_amr=False)
-    print("outputs", outputs)  # should be (batch_size, seq_length, num_classes)
+    print("outputs", outputs.shape)  # should be (batch_size, seq_length, num_classes)
