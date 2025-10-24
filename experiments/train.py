@@ -1,70 +1,8 @@
-import json
-import h5py
 import torch
-from torch.utils.data import Dataset
 from transformers import Trainer, TrainingArguments, T5Config
 
-from baselines.AMR_KG_rel_classifier import Graph2GraphRelationClassifier
-
-
-# ==============================
-#  Dataset class
-# ==============================
-class RebelAMRDataset(Dataset):
-    """General dataset class for REBEL and REBEL+AMR datasets."""
-
-    def __init__(self, tokenizer, hdf5_path, split="train", max_length=512, use_amr=False):
-        self.tokenizer = tokenizer
-        self.file = h5py.File(hdf5_path, "r")
-        self.data = self.file[split] if split in self.file else self.file["train"]
-        self.max_length = max_length
-        self.use_amr = use_amr  # if True, append AMR-based triplets to text
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = json.loads(self.data[idx].decode("utf-8"))
-        text = item["text"]
-        label = item.get("label_str", "None")
-
-        # Optionally add AMR info to input text
-        if self.use_amr and "AMR_based_triplets" in item:
-            amr_info = " ".join([" ".join(triplet) for triplet in item["AMR_based_triplets"]])
-            text = text + " [AMR] " + amr_info
-
-        source = self.tokenizer(
-            text,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-        target = self.tokenizer(
-            label,
-            truncation=True,
-            padding="max_length",
-            max_length=32,
-            return_tensors="pt",
-        )
-
-        return {
-            "input_ids": source["input_ids"].squeeze(),
-            "attention_mask": source["attention_mask"].squeeze(),
-            "labels": target["input_ids"].squeeze(),
-        }
-
-
-
-# ==============================
-#  Load data
-# ==============================
-def load_dataset(tokenizer, train_path, val_path=None, max_length=512, use_amr=False):
-    train_ds = RebelAMRDataset(tokenizer, train_path, split="train", max_length=max_length, use_amr=use_amr)
-    val_ds = None
-    if val_path:
-        val_ds = RebelAMRDataset(tokenizer, val_path, split="train", max_length=max_length, use_amr=use_amr)
-    return train_ds, val_ds
+from data.utils import load_dataset
+from models.AMR_KG_rel_classifier import Graph2GraphRelationClassifier
 
 
 # ==============================

@@ -490,7 +490,7 @@ class AMRGraph:
 
 
 if __name__ == "__main__":
-    from amr_examples import AMR_EXAMPLES
+    from data.amr_examples import AMR_EXAMPLES
     
     # TODO: change index to test different examples
     i = 0

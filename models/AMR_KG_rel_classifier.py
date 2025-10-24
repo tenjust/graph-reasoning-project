@@ -15,9 +15,9 @@ from transformers.models.t5.modeling_t5 import T5EncoderModel, T5Block, T5LayerF
     T5LayerSelfAttention, T5Stack, T5Attention
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
-from baselines.GraphLanguageModels.experiments.encoder.text_guided_relation_prediction.data_utils import \
+from models.GraphLanguageModels.experiments.encoder.text_guided_relation_prediction.data_utils import \
     data_to_dataT5
-from baselines.GraphLanguageModels.models.graph_T5.wrapper_functions import Graph, Data
+from models.GraphLanguageModels.models.graph_T5.wrapper_functions import Graph, Data
 from data.utils import load_hdf5_data
 
 
@@ -48,6 +48,46 @@ def init_tensors(batch_dim: int, max_seq_len: int, device=None) -> tuple[Tensor 
         (batch_dim, max_seq_len, max_seq_len), dtype=torch.bool, device=device
     )
     return relative_position, sparsity_mask, use_additional_bucket
+
+
+def shape_GLM_tensors(
+    data: tuple[Tensor, ...], tokenizer: T5TokenizerFast, model_max_length: int, device
+) -> tuple[Tensor ,...]:
+    """
+    Shape the GLM tensors for a batch of data instances. The returned tensors are:
+    - input_ids,
+    - relative_position,
+    - sparsity_mask,
+    - use_additional_bucket
+    :param data: list of tensors (input_ids, relative_position, sparsity_mask, use_additional_bucket)
+    :param tokenizer: tokenizer to use for padding
+    :param model_max_length: maximum sequence length for the model
+    :param device: device to create the tensors on
+    :return: tuple of tensors: input_ids, relative_position, sparsity_mask, use_additional_bucket
+    """
+    batch_max_seq_len = max([d[0].shape[1] for d in data])
+    max_seq_len = min(model_max_length, batch_max_seq_len)
+    data_input_ids = data[0]
+    data_tensors = data[1:]
+    num_instances = data_input_ids.shape[0]
+    # refining input_ids tensor
+    input_ids = torch.ones(
+        (num_instances, max_seq_len), dtype=torch.long, device=device,
+    ) * tokenizer.pad_token_id
+    # tensors: relative_position, sparsity_mask, use_additional_bucket
+    tensors = init_tensors(num_instances, max_seq_len, device)
+    # check that all tensors have the same seq_len (taking into account the first batch dim)
+    shapes = [data_input_ids.shape[2], *chain.from_iterable(t.shape[2:] for t in data_tensors)]
+    assert len(set(shapes)) == 1, f"Inconsistent shapes: {shapes}"
+    instance_len = min(data_input_ids.shape[2], max_seq_len)
+    for batch in range(data_input_ids.shape[0]):
+        # fill in the tensors with data from the instance
+        input_ids[batch, :instance_len] = data_input_ids[:, :instance_len]
+        for j, d_tensor in enumerate(data_tensors):
+            tensors[j][batch, :instance_len, :instance_len] = \
+                d_tensor[:, :instance_len, :instance_len]
+
+    return input_ids, *tensors
 
 
 def preprocess(data_instance: dict, tokenizer: T5TokenizerFast, use_amr: bool) -> Data:
@@ -129,33 +169,19 @@ class Decorators:
             :param use_amr: whether to use AMR-based triplets (not supported yet)
             :return: tensors of preprocessed inputs for the model are passed to forward_fn
             """
+            logging.debug(f"using a decorator for graph preprocessing, use_amr={use_amr}")
             if type(data) is list:
                 # batch of data instances
                 data = [preprocess(data_instance, self.tokenizer, use_amr) for data_instance in data]
-
-                batch_max_seq_len = max([d.input_ids.shape[1] for d in data])
-                max_seq_len = min(self.config.model_max_length, batch_max_seq_len)
-
-                input_ids = torch.ones(
-                    (len(data), max_seq_len), dtype=torch.long, device=self.device
-                ) * self.tokenizer.pad_token_id
-                # tensors: relative_position, sparsity_mask, use_additional_bucket
-                tensors = init_tensors(len(data), max_seq_len, self.device)
-                for i, d in enumerate(data):
-                    d_tensors = [d.relative_position, d.sparsity_mask, d.use_additional_bucket]
-                    # check that all tensors have the same seq_len
-                    shapes = [d.input_ids.shape[1], *chain.from_iterable(t.shape[1:] for t in d_tensors)]
-                    assert len(set(shapes)) == 1, f"Inconsistent shapes in data instance {i}: {shapes}"
-
-                    # fill in the tensors with data from the instance
-                    instance_len = min(d.input_ids.shape[1], max_seq_len)
-                    input_ids[i, :instance_len] = d.input_ids[:, :instance_len]
-                    for j, d_tensor in enumerate(d_tensors):
-                        tensors[j][i, :instance_len, :instance_len] = \
-                            d_tensor[:, :instance_len, :instance_len]
+                input_ids = torch.cat([d.input_ids.unsqueeze(0) for d in data], dim=0)
+                relative_position = torch.cat([d.relative_position.unsqueeze(0) for d in data], dim=0)
+                sparsity_mask = torch.cat([d.sparsity_mask.unsqueeze(0) for d in data], dim=0)
+                use_additional_bucket = torch.cat([d.use_additional_bucket.unsqueeze(0) for d in data], dim=0)
+                all_tensors = (input_ids, relative_position, sparsity_mask, use_additional_bucket)
+                tensors = shape_GLM_tensors(all_tensors, self.tokenizer, self.config.model_max_length, self.device)
                 # TODO: redefine or stack?
                 self.labels = torch.tensor([d.label for d in data], device=device)
-                return forward_fn(self, input_ids, *tensors)
+                return forward_fn(self, *tensors)
             else:
                 # single data instance
                 warnings.warn(
@@ -304,8 +330,8 @@ class GraphAttention(T5Attention):
             logging.debug(f"received relative_position of shape {relative_position.shape}")
         else:
             logging.debug(f"using passed relative_position: {relative_position.shape}")
-            # was commented out in GLM implementation, using it leads to shape mismatch later on
-            # as context_position unsqueezes relative_position again
+            # was also commented out in GLM implementation, using it leads to shape mismatch
+            # later on as context_position unsqueezes relative_position again
             # context_position = relative_position[:, None].to(device) # shape: (seq_length, 1)
 
         relative_position_bucket = self._relative_position_bucket(
@@ -528,35 +554,59 @@ class Graph2GraphRelationClassifier(PreTrainedModel):
                 self.config, has_relative_attention_bias=first_layer
             )
 
-    @Decorators.graph_preprocessing
-    def forward(self, *args: Tensor) -> Tensor:
+    # @Decorators.graph_preprocessing  # commented out to allow direct tensor input
+    def forward(
+            self,
+            input_ids: Tensor,
+            relative_position: Tensor,
+            sparsity_mask: Tensor,
+            use_additional_bucket: Tensor,
+            # indices: dict,
+            attention_mask: Tensor = None
+    ) -> Tensor:
         """
         Forward method of the classifier. One is expected to pass loaded rebel data
         and a flag for whether to use AMR triples for guidance instead of the raw text.
         The data will be preprocessed and converted into tensors suitable for the model
         in the decorated graph_preprocessing method.
+
+        :param input_ids: torch.Tensor of shape (batch_size, seq_length)
+        :param relative_position: torch.Tensor of shape (batch_size, seq_length, seq_length
+        :param sparsity_mask: torch.Tensor of shape (batch_size, seq_length, seq_length)
+        :param use_additional_bucket: torch.Tensor of shape (batch_size, seq_length,
+            seq_length)
+        :param attention_mask: not used and is only here for compatibility with transformers.Trainer
+        :return: logits tensor of shape (batch_size, seq_length, num_classes)
         """
         logging.debug(f"running on device: {self.device}")
-        assert len(args) == 4, f"Expected 4 arguments, but got {len(args)}"
-        names = ["input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"]
-        kwargs = {name: args[i] for i, name in enumerate(names)}
+        args = ["input_ids", "relative_position", "sparsity_mask", "use_additional_bucket"]
+        tensors = (input_ids, relative_position, sparsity_mask, use_additional_bucket)
+        tensors = shape_GLM_tensors(tensors, self.tokenizer, self.config.model_max_length, self.device)
+        kwargs = {arg: tensors[i] for i, arg in enumerate(args)}
         logging.debug('T5 encoder model is called')
         # outputs: (last_hidden_state, hidden_states, attentions)
         output = self.t5.encoder(**kwargs)  # (batch_size, seq_len, hidden_size)
 
         logging.debug('classifier is called')
         logits = self.classifier(output[0])  # (batch_size, seq_len, num_classes)
-
-        return logits
+        # print("classifier output logits:", logits.shape)  # floats
+        # logits = torch.cat([
+        #     get_embedding(sequence_embedding=logits[i], indices=indices[i], concept='<mask>',
+        #                   embedding_aggregation='mean')
+        #     for i in range(input_ids.shape[0])
+        # ], dim=0)
+        predictions = self.get_classes(logits)  # scalar class predictions: (seq_len)
+        # print("predictions:", predictions.shape, predictions)
+        return predictions
 
     def get_prob_distribution(self, logits: Tensor) -> Tensor:
-        """ Get the probability distribution over classes """
+        """ [GLM] Get the probability distribution over classes """
         return self.softmax(logits)  # (batch_size, seq_len, num_classes)
 
     @staticmethod
-    def get_class(logits: Tensor) -> int:
-        """ Get the class with the highest probability """
-        return int(torch.argmax(logits, dim=-1).item())
+    def get_classes(logits: Tensor) -> Tensor:
+        """ Get the classes with the highest probability """
+        return torch.argmax(logits, dim=-1).squeeze()
 
     @Decorators.check_stack_kwargs
     def stack_forward(self: T5Stack, **kwargs):
@@ -731,14 +781,13 @@ if __name__ == "__main__":
     )
 
     model = Graph2GraphRelationClassifier(config)
-
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model.to(device)
 
     batch_size = 2
     seq_length = 10
     # this script is not in the root folder, so paths should be relative
-    data_path = "GraphLanguageModels/data/rebel_dataset/REBEL_AMR_TRIPLES.train.hdf5"
-    data = load_hdf5_data(data_path, num_samples=10)
+    data_path = "../data/rebel_dataset/REBEL_AMR_TRIPLES.train.hdf5"
+    data = load_hdf5_data(data_path, split="train", num_samples=10)
     outputs = model(data, use_amr=False)
-    print("outputs", outputs.shape)  # should be (batch_size, seq_length, num_classes)
+    print("outputs", outputs)  # should be (batch_size, seq_length, num_classes)

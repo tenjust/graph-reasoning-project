@@ -1,9 +1,7 @@
-import json
-import h5py
 import torch
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from torch.utils.data import DataLoader
-from train import RebelAMRDataset  # reuse your dataset class
+from experiments.train import RebelAMRDataset  # reuse your dataset class
 
 
 def evaluate_model(model_dir, data_path, model_name="t5-small", split="train", num_samples=5, use_amr=False):

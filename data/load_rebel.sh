@@ -20,4 +20,10 @@
 
 source ~/.bashrc 2>/dev/null
 
-python3 preprocessing/load_rebel.py
+cd ~ || 1
+cd "$(find . -type d -name 'graph-reasoning-project' -print -quit)" || {
+  echo "Error: Not able to locate project directory."
+  exit 1
+}
+
+python3 data/load_rebel.py

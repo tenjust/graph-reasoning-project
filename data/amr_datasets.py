@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict
 import json
+
+import h5py
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
@@ -88,3 +90,51 @@ class GraphDataset(Dataset):
 
         label = torch.tensor(ex.label if ex.label is not None else -100, dtype=torch.long)
         return {"input_ids": input_ids, "attention_mask": mask, "labels": label}
+
+
+# ==============================
+#  Dataset class
+# ==============================
+class RebelAMRDataset(Dataset):
+    """General dataset class for REBEL and REBEL+AMR datasets."""
+
+    def __init__(self, tokenizer, hdf5_path, split="train", max_length=512, use_amr=False):
+        self.tokenizer = tokenizer
+        self.file = h5py.File(hdf5_path, "r")
+        self.data = self.file[split] if split in self.file else self.file["train"]
+        self.max_length = max_length
+        self.use_amr = use_amr  # if True, append AMR-based triplets to text
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = json.loads(self.data[idx].decode("utf-8"))
+        text = item["text"]
+        label = item.get("label_str", "None")
+
+        # Optionally add AMR info to input text
+        if self.use_amr and "AMR_based_triplets" in item:
+            amr_info = " ".join([" ".join(triplet) for triplet in item["AMR_based_triplets"]])
+            text = text + " [AMR] " + amr_info
+
+        source = self.tokenizer(
+            text,
+            truncation=True,
+            padding="max_length",
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        target = self.tokenizer(
+            label,
+            truncation=True,
+            padding="max_length",
+            max_length=32,
+            return_tensors="pt",
+        )
+
+        return {
+            "input_ids": source["input_ids"].squeeze(),
+            "attention_mask": source["attention_mask"].squeeze(),
+            "labels": target["input_ids"].squeeze(),
+        }

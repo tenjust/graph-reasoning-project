@@ -23,7 +23,15 @@ source ~/.bashrc 2>/dev/null
 
 pyenv activate .venv || { echo "Error: Could not activate the .venv pyenv environment."; exit 1; }
 
-cd baselines/GraphLanguageModels || { echo "Error: Could not change to GraphLanguageModels directory."; exit 1; }
+cd ~ || 1
+cd "$(find . -type d -name 'graph-reasoning-project' -print -quit)" || {
+  echo "Error: Not able to locate project directory."
+  exit 1
+}
+cd models/GraphLanguageModels || {
+  echo "Error: Could not change to GraphLanguageModels directory."
+  exit 1
+}
 
 MODELSIZE=t5-small  # options: t5-small, t5-base, t5-large
 

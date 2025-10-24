@@ -19,10 +19,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 # External deps / local modules
-from amr_graph import AMRGraph
+from preprocessing.amr_graph import AMRGraph
 from config import REBEL_DIR
-from preprocessing.hdf5_utils import (
-    load_original_split, write_json_hdf5, inspect_hdf5
+from data.utils import (
+    load_original_split, inspect_hdf5
 )
 
 # ---------- AMR augmentation  ----------

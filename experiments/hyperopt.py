@@ -1,6 +1,5 @@
 import optuna
 from subprocess import run
-import os
 import ast
 
 def objective(trial):

@@ -3,9 +3,8 @@ import torch.nn as nn
 import logging
 
 from transformers.modeling_utils import PreTrainedModel
-from models.graph_T5.graph_t5 import T5Config, T5EncoderModel
-from models.graph_T5.graph_t5 import T5TokenizerFast as T5Tokenizer
-from models.graph_T5.wrapper_functions import graph_to_graphT5, get_dummy_graph
+from graph_t5 import T5Config, T5EncoderModel
+from graph_t5 import T5TokenizerFast as T5Tokenizer
 
 
 class GraphT5Classifier(PreTrainedModel):
@@ -19,7 +18,7 @@ class GraphT5Classifier(PreTrainedModel):
         self.config = config
         self.tokenizer = T5Tokenizer.from_pretrained(self.config.modelsize, model_max_length=self.config.model_max_length)
     
-        self.t5model = T5EncoderModel.from_pretrained(self.config.modelsize, config=config, ignore_mismatched_sizes=True)  # when intialiting the model with .from_pretrained, the weights are loaded from the pretrained model, so the t5 parameters are not actually used in that case. Loading them here is unnecessary overhead. 
+        self.t5model = T5EncoderModel.from_pretrained(self.config.modelsize, config=config, ignore_mismatched_sizes=True)  # when intializing the model with .from_pretrained, the weights are loaded from the pretrained model, so the t5 parameters are not actually used in that case. Loading them here is unnecessary overhead.
         self.hidden_size = self.t5model.config.d_model
         self.classification_head = nn.Linear(self.hidden_size, self.config.num_classes, bias=True)
         self.softmax = nn.Softmax(dim=-1)
@@ -105,3 +104,33 @@ class DualGraphT5Classifier(PreTrainedModel):
     def get_label(self, logits: torch.Tensor) -> torch.Tensor:
         return torch.argmax(logits, dim=-1)
 
+
+if __name__ == "__main__":
+    config = T5Config.from_pretrained("t5-small")
+    config.num_classes = 10
+    config.modelsize = "t5-small"
+    config.model_max_length = 512
+    config.rel_attn_num_additional_buckets = 2  # number of additional buckets for graph-to-graph attention
+    # init_additional_buckets_from=[None, 1]
+    model = GraphT5Classifier(config)
+    print(model)
+
+    batch_size = 2
+    seq_length = 8
+
+    input_ids = torch.randint(0, config.vocab_size, (batch_size, seq_length))
+    print("input_ids", input_ids)
+    relative_position = torch.randint(-4, 4, (batch_size, seq_length, seq_length))
+    print("relative_position", relative_position)
+    sparsity_mask = torch.randint(0, 2, (batch_size, seq_length, seq_length)).bool()
+    print("sparsity_mask", sparsity_mask)
+    use_additional_bucket = torch.randint(0, 2, (batch_size, seq_length, seq_length)).bool()
+    print("use_additional_bucket", use_additional_bucket)
+
+    outputs = model(
+        input_ids=input_ids,
+        relative_position=relative_position,
+        sparsity_mask=sparsity_mask,
+        use_additional_bucket=use_additional_bucket
+    )
+    print(outputs.shape)

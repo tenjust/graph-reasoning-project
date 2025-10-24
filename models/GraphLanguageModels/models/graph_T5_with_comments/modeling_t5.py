@@ -898,7 +898,7 @@ class T5Block(nn.Module):
 
         do_cross_attention = self.is_decoder and encoder_hidden_states is not None
         if do_cross_attention:  # not used in GLM
-            # the actual query length is unknown for cross attention
+            # the actual query length is unknown for cross-attention
             # if using past key value states. Need to inject it here
             if present_key_value_state is not None:
                 query_length = present_key_value_state[0].shape[2]
