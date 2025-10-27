@@ -2,139 +2,157 @@
 
 ## Overview
 
-This repository is a team workspace for experiments building on the **Graph Language Models** paper.
-It includes:
+This repository explores **graph-based reasoning** with language models, inspired by the *Graph Language Models (GLM)* paper from Heidelberg NLP.  
+It combines **AMR (Abstract Meaning Representation)** and **Knowledge Graph (KG)** data for reasoning and relation classification tasks.
 
-1. **Baseline A** — the original paper’s code (GitHub repo), used as a reference.
-2. **Baseline B** — our reimplementation of the paper’s model in this repo.
-3. **Experiment-ready structure** for testing new inputs, datasets, and preprocessing formats (e.g., reasoning QA datasets, AMR/KG-style triples).
+The project includes:
+- **Reproduction of GLM baselines** from the official repository  
+- **Custom datasets and preprocessing** (REBEL and AMR)  
+- **Reimplementation and extension** of models for graph-based reasoning  
+
 
 ## Folder Structure
 
 ```
 graph-reasoning-project/
-├── baselines/            # Reference to original paper code and results
-├── configs/              # YAML configuration files for experiments
-├── data/                 # Raw and processed datasets
-├── models/               # Reimplementation of models and variants
-├── experiments/          # Training and evaluation scripts
-├── preprocessing/        # Scripts to preprocess input data (AMR/KG etc.)
-├── scripts/              # Bash scripts to launch experiments
-├── notebooks/            # Notebooks for exploration and analysis
-├── README.md
-├── requirements.txt
-└── environment.yml
+├── data/ # Scripts and data for REBEL dataset preprocessing
+| ├── rebel_dataset/ # General data storage directory
+│ ├── amr_datasets.py
+│ ├── amr_examples.py
+│ ├── augment_rebel.py
+│ ├── load_rebel.py
+│ ├── load_rebel.sh
+│ └── utils.py
+│
+├── experiments/ # Training, evaluation, and tuning
+│ ├── train.py
+│ ├── evaluate.py
+│ ├── hyperopt.py
+│ └── README.md
+│
+├── models/ # Model definitions
+│ └── AMR_KG_rel_classifier.py
+│ ├── GraphLanguageModels/ # Official GLM repo (cloned reference)
+│ ├── scripts/
+│ │ ├── run_original_graph_only.sh
+│ │ ├── run_original_text_guided.sh
+│ │ └── train_text_guided.sh
+│ └── ...
+|
+├── preprocessing/ # AMR preprocessing and graph utilities
+│ ├── amr_graph_before_rewriting.ipynb
+│ ├── amr_graph.py
+│ └── utils.py
+│
+├── config.py
+├── setup.sh # Environment setup script
+├── requirements.txt # Python dependencies
+└── README.md
 ```
 
 ---
 
 ## Folder Details
 
-* **baselines/**
+### **data/**
+Contains all dataset-related scripts and files for **REBEL** preprocessing and augmentation.
 
-  * `original_README.md` — notes on paper repo commit, commands, and results
-  * `run_original_graph_only.sh` — Script to run the paper’s graph-only baseline
-  * * `run_original_text_guided.sh` — Script to run the paper’s text+graph baseline
-  * `results/` — stores logs and checkpoints from the paper repo
+- **rebel_dataset/** — stores general dataset files and preprocessed data  
+- `amr_datasets.py` — prepares AMR-formatted datasets for experiments  
+- `amr_examples.py` — examples and utilities for AMR-encoded samples  
+- `augment_rebel.py` — augments REBEL data with additional reasoning patterns  
+- `load_rebel.py` / `load_rebel.sh` — scripts to download and preprocess the REBEL dataset  
+- `utils.py` — helper functions for dataset I/O and formatting  
 
-* **configs/**
+---
 
-  * `baseline_a.yaml` — paper’s setup (reference)
-  * `baseline_b.yaml` — our reimplementation, same input as paper
-  * `exp_kg.yaml` — future experiments with KG/AMR or other datasets
+### **experiments/**
+Contains all training, evaluation, and tuning scripts.
 
-* **data/**
+- `train.py` — main training entry point  
+- `evaluate.py` — runs evaluation on validation/test datasets  
+- `hyperopt.py` — performs hyperparameter search or ablation studies  
+- `README.md` — additional notes or experiment-specific documentation  
 
-  * `raw/` — original datasets (ConceptNet, REBEL, QA datasets)
-  * `processed/` — preprocessed data for experiments
-  * `README.md` — instructions on downloading and preprocessing
+---
 
-* **models/**
+### **models/**
+Contains model architectures and baseline references.
 
-  * `glm_baseline.py` — our reimplementation of the paper’s model
-  * `glm_kg.py` — variant with new input preprocessing (future experiments)
+- `AMR_KG_rel_classifier.py` — core model integrating AMR and KG representations for relation reasoning  
+- **GraphLanguageModels/** — cloned reference implementation of the original *Graph Language Models* paper  
+  - `scripts/run_original_graph_only.sh` — runs the paper’s **graph-only baseline**  
+  - `scripts/run_original_text_guided.sh` — runs the **text + graph baseline**  
+  - `scripts/train_text_guided.sh` — fine-tuning entry point for the paper’s model  
 
-* **experiments/**
+---
 
-  * `train.py` — training entrypoint (reads configs)
-  * `evaluate.py` — evaluation pipeline
-  * `utils.py` — helper functions for training and evaluation
+### **preprocessing/**
+Scripts for AMR graph preprocessing and utilities.
 
-* **preprocessing/**
+- `amr_graph_before_rewriting.ipynb` — notebook for exploring and rewriting AMR graphs  
+- `amr_graph.py` — final AMR parsing and transformation for model input  
+- `utils.py` — shared helper functions for preprocessing pipelines  
 
-  * `linearise.py` — transform input to linearised triples (paper-style)
-  * `kg_format.py` — transform input to KG-style triples (future experiments)
+---
 
-* **scripts/**
+### **config.py**
+Central configuration file for dataset paths, model parameters, and preprocessing options.
 
-  * `run_baseline_b.sh` — run Baseline B with its config
-  * `run_exp_kg.sh` — run KG/AMR experiments with corresponding config
+---
 
-* **notebooks/**
+### **setup.sh**
+Environment setup script — installs dependencies and prepares the environment for running experiments.
 
-  * `data_inspection.ipynb` — explore and inspect datasets
-  * `results_visualization.ipynb` — visualize results and metrics
+---
+
+### **requirements.txt**
+List of Python dependencies required for the project.
+
+---
+
+### **README.md**
+Project overview, usage instructions, and experiment documentation.
 
 ---
 
 ## Setup Instructions
 
-### 1. Clone repositories side by side
+### 1. Clone the repository
 ```bash
-# Our team repo
-git clone https://github.com/tenjust/graph-reasoning-project.git graph-reasoning-project
+git clone https://github.com/tenjust/graph-reasoning-project.git
+cd graph-reasoning-project
 
-# Paper’s official GLM repo
-git clone https://github.com/Heidelberg-NLP/GraphLanguageModels.git
-
-After cloning, your folder structure should look like:
-
-project_root/
-├── graph-reasoning-project/
-└── GraphLanguageModels/
 
 2. **Install dependencies**
-
+You can install dependencies using pip or bash:
 ```bash
-cd graph-reasoning-project
 pip install -r requirements.txt
-# OR if using conda
-conda env create -f environment.yml
-conda activate graph-reasoning-project
+# OR
+bash setup.sh
 ```
 
-3. **Download datasets**
+3. **Prepare datasets**
 
-* Follow instructions in `data/README.md` for ConceptNet, REBEL, or reasoning QA datasets.
-
-4. **Run Baseline A (paper reference)**
-
--  Graph-only (paper’s baseline, T5-small for testing):
+Run preprocessing for the REBEL dataset:
 ```bash
-bash baselines/run_original.sh
-```
-- Text + Graph baseline:
-```bash
-bash baselines/run_original.sh
+bash data/load_rebel.sh
 ```
 
-5. **Run Baseline B (our reimplementation)**
+4. **Train and evaluate**
 
+All scripts for training, evaluation, and hyperparameter tuning are located in the `experiments/` folder.  
+
+To run experiments, see the detailed instructions in:
 ```bash
-bash scripts/run_baseline_b.sh
+experiments/README.md
 ```
 
-6. **Run experiments with new inputs (KG/AMR, QA datasets)**
+5. **Run original GLM baselines**
 
 ```bash
-bash scripts/run_exp_kg.sh
+bash models/scripts/run_original_graph_only.sh
+bash models/scripts/run_original_text_guided.sh
 ```
 
 ---
-
-## Notes
-
-* **Baseline A** = official paper implementation. Used as reference.
-* **Baseline B** = reimplementation in this repo, foundation for experiments.
-* **YAML configs** are the source of truth for training parameters, datasets, and model choices.
-* Ensure `PYTHONPATH` includes this directory when running scripts.

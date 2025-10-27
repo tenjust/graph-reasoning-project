@@ -72,12 +72,21 @@ The script prints for each example:
 
 ---
 
+## Hyperparameter Optimization
+
+The hyperopt.py script automates the process of tuning hyperparameters such as learning rate, batch size, and number of epochs.
+
+### Run Hyperparameter Search
+
+```bash
+python experiments/hyperopt.py
+```
+
 ## File Overview
 
-| File          | Description                                            |
-| ------------- | ------------------------------------------------------ |
-| `train.py`    | Defines dataset loading and fine-tuning of T5.         |
-| `evaluate.py` | Evaluates trained models and prints predictions.       |
-| `utils.py`    | Reserved for helper functions (can be expanded later). |
-| `plan.md`     | Notes on planned experiments.                          |
-| `README.md`   | Usage instructions.                                    |
+| File          | Description                                                            |
+| ------------- | ---------------------------------------------------------------------- |
+| `train.py`    | Defines dataset loading, model training, and fine-tuning of T5.        |
+| `evaluate.py` | Evaluates trained models and prints predictions for manual inspection. |
+| `hyperopt.py` | Runs hyperparameter tuning over multiple configurations.               |
+| `README.md`   | Usage instructions for experiments.                                    |
