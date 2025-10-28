@@ -122,13 +122,12 @@ Project overview, usage instructions, and experiment documentation.
 ```bash
 git clone https://github.com/tenjust/graph-reasoning-project.git
 cd graph-reasoning-project
+```
 
 
 2. **Install dependencies**
-You can install dependencies using pip or bash:
+You can install dependencies using a bash script:
 ```bash
-pip install -r requirements.txt
-# OR
 bash setup.sh
 ```
 
